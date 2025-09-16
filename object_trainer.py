@@ -81,7 +81,7 @@ class YOLOv8Trainer:
         except Exception as e:
             raise Exception(f"Error initializing model: {str(e)}")
     
-    def train(self, epochs=100, imgsz=640, batch_size=16, patience=50, save_period=10):
+    def train(self, epochs=100, imgsz=640, batch_size=16, patience=50, save_period=10, device=None):
         """
         Train the YOLOv8 model
         
@@ -91,11 +91,37 @@ class YOLOv8Trainer:
             batch_size (int): Batch size
             patience (int): Early stopping patience
             save_period (int): Save model every N epochs
+            device (str): Device to use ('auto', 'cpu', '0', '1', etc.)
         """
         if self.model is None:
             self.initialize_model()
         
         try:
+            # Determine device to use
+            if device is None:
+                # Auto-detect best device
+                if torch.cuda.is_available():
+                    training_device = '0'  # Use first GPU
+                    device_name = torch.cuda.get_device_name(0)
+                    device_info = f"GPU ({device_name})"
+                else:
+                    training_device = 'cpu'
+                    device_info = "CPU"
+            else:
+                training_device = device
+                if device == 'cpu':
+                    device_info = "CPU (forced)"
+                elif device.isdigit():
+                    if torch.cuda.is_available() and int(device) < torch.cuda.device_count():
+                        device_name = torch.cuda.get_device_name(int(device))
+                        device_info = f"GPU {device} ({device_name})"
+                    else:
+                        print(f"⚠️  GPU {device} not available, falling back to CPU")
+                        training_device = 'cpu'
+                        device_info = "CPU (fallback)"
+                else:
+                    device_info = f"{device}"
+            
             print(f"\n{'='*60}")
             print(f"STARTING YOLOV8 TRAINING")
             print(f"{'='*60}")
@@ -104,7 +130,13 @@ class YOLOv8Trainer:
             print(f"Epochs: {epochs}")
             print(f"Image size: {imgsz}")
             print(f"Batch size: {batch_size}")
-            print(f"Device: {'GPU' if torch.cuda.is_available() else 'CPU'}")
+            print(f"Device: {device_info}")
+            
+            # Show GPU memory info if using GPU
+            if training_device != 'cpu' and torch.cuda.is_available():
+                gpu_memory = torch.cuda.get_device_properties(int(training_device)).total_memory / 1024**3
+                print(f"GPU Memory: {gpu_memory:.1f} GB")
+            
             print(f"{'='*60}\n")
             
             # Start training
@@ -115,7 +147,7 @@ class YOLOv8Trainer:
                 batch=batch_size,
                 patience=patience,
                 save_period=save_period,
-                device='0' if torch.cuda.is_available() else 'cpu',
+                device=training_device,
                 verbose=True,
                 plots=True,
                 save=True
@@ -199,6 +231,8 @@ def main():
                        help='Run validation after training')
     parser.add_argument('--export', type=str, choices=['onnx', 'tensorrt', 'coreml'], 
                        help='Export format after training')
+    parser.add_argument('--device', type=str, default=None,
+                       help='Device to use for training (auto, cpu, 0, 1, etc.)')
     
     args = parser.parse_args()
     
@@ -214,7 +248,8 @@ def main():
             epochs=args.epochs,
             imgsz=args.imgsz,
             batch_size=args.batch,
-            patience=args.patience
+            patience=args.patience,
+            device=args.device
         )
         
         # Get best model path

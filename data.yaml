@@ -2,12 +2,5 @@ train: ../train/images
 val: ../valid/images
 test: ../test/images
 
-nc: 3
-names: ['mobil', 'motor', 'truck']
-
-roboflow:
-  workspace: iot-q3ahg
-  project: vehicle-detect-qxprz-pfybi
-  version: 2
-  license: CC BY 4.0
-  url: https://universe.roboflow.com/iot-q3ahg/vehicle-detect-qxprz-pfybi/dataset/2
+nc: 6
+names: ['mobil', 'motor', 'truck', '0', '1', '------------------------------']
