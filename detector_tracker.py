@@ -14,7 +14,7 @@ from pathlib import Path
 
 class YOLODetectorTracker:
     def __init__(self, model_path, config_path=None, class_names=None, 
-                 conf_threshold=0.5, nms_threshold=0.4, tracker_type='CSRT'):
+                 conf_threshold=0.5, nms_threshold=0.4, tracker_type='CSRT', use_coco=False):
         """
         Initialize YOLO detector with OpenCV tracker
         
@@ -25,22 +25,57 @@ class YOLODetectorTracker:
             conf_threshold (float): Confidence threshold for detection
             nms_threshold (float): NMS threshold
             tracker_type (str): Tracker type ('CSRT', 'KCF', 'MOSSE')
+            use_coco (bool): Use COCO class names (80 classes) instead of custom
         """
         self.model_path = model_path
         self.config_path = config_path
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
         self.tracker_type = tracker_type
+        self.use_coco = use_coco
         
-        # Default class names for vehicle detection
-        self.class_names = class_names or ['mobil', 'motor', 'truck']
+        # COCO dataset class names (80 classes)
+        self.coco_names = [
+            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
+            'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
+            'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
+            'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
+            'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+            'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+            'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
+            'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier',
+            'toothbrush'
+        ]
+        
+        # Set class names based on preference
+        if use_coco:
+            self.class_names = self.coco_names
+        elif class_names:
+            self.class_names = class_names
+        else:
+            self.class_names = ['mobil', 'motor', 'truck']  # Default vehicle classes
         
         # Colors for each class
-        self.colors = [
-            (255, 0, 0),    # Blue for mobil
-            (0, 255, 0),    # Green for motor
-            (0, 0, 255),    # Red for truck
-        ]
+        if use_coco:
+            # Generate colors for 80 COCO classes
+            np.random.seed(42)  # For consistent colors
+            self.colors = []
+            for i in range(len(self.class_names)):
+                color = tuple(map(int, np.random.randint(0, 255, 3)))
+                self.colors.append(color)
+        else:
+            # Default colors for vehicle classes or custom classes
+            self.colors = [
+                (255, 0, 0),    # Blue for mobil
+                (0, 255, 0),    # Green for motor
+                (0, 0, 255),    # Red for truck
+            ]
+            # Extend colors if more classes than default colors
+            while len(self.colors) < len(self.class_names):
+                self.colors.append((np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)))
         
         # Tracking state
         self.tracker = None
@@ -620,6 +655,8 @@ def main():
                        help='Max frames to track before re-detection')
     parser.add_argument('--no-show', action='store_true',
                        help='Do not display results')
+    parser.add_argument('--coco', action='store_true',
+                       help='Use COCO class names (80 classes) instead of custom classes')
     
     args = parser.parse_args()
     
@@ -633,7 +670,8 @@ def main():
             config_path=args.config,
             conf_threshold=args.conf,
             nms_threshold=args.nms,
-            tracker_type=args.tracker
+            tracker_type=args.tracker,
+            use_coco=args.coco
         )
         
         # Set max tracking frames

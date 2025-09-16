@@ -16,7 +16,7 @@ from ultralytics import YOLO
 import yaml
 
 class YOLOv8Detector:
-    def __init__(self, model_path, conf_threshold=0.5, iou_threshold=0.45):
+    def __init__(self, model_path, conf_threshold=0.5, iou_threshold=0.45, use_coco=False):
         """
         Initialize YOLOv8 detector
         
@@ -24,22 +24,53 @@ class YOLOv8Detector:
             model_path (str): Path to trained model weights
             conf_threshold (float): Confidence threshold for detections
             iou_threshold (float): IoU threshold for NMS
+            use_coco (bool): Use COCO class names (80 classes) instead of custom
         """
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.model = None
-        self.class_names = ['mobil', 'motor', 'truck']  # Default class names
+        self.use_coco = use_coco
+        
+        # COCO dataset class names (80 classes)
+        self.coco_names = [
+            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
+            'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
+            'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
+            'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
+            'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+            'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+            'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
+            'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier',
+            'toothbrush'
+        ]
+        
+        # Default to custom vehicle classes or COCO classes
+        if use_coco:
+            self.class_names = self.coco_names
+        else:
+            self.class_names = ['mobil', 'motor', 'truck']  # Default custom classes
         
         # Load model
         self.load_model()
         
         # Colors for each class (BGR format)
-        self.colors = {
-            'mobil': (255, 0, 0),    # Blue
-            'motor': (0, 255, 0),    # Green  
-            'truck': (0, 0, 255),    # Red
-        }
+        if use_coco:
+            # Generate colors for 80 COCO classes
+            np.random.seed(42)  # For consistent colors
+            self.colors = {}
+            for i, name in enumerate(self.class_names):
+                self.colors[name] = tuple(map(int, np.random.randint(0, 255, 3)))
+        else:
+            # Custom colors for vehicle classes
+            self.colors = {
+                'mobil': (255, 0, 0),    # Blue
+                'motor': (0, 255, 0),    # Green  
+                'truck': (0, 0, 255),    # Red
+            }
     
     def load_model(self):
         """Load the trained YOLOv8 model"""
@@ -50,12 +81,16 @@ class YOLOv8Detector:
             print(f"Loading model from: {self.model_path}")
             self.model = YOLO(self.model_path)
             
-            # Get class names from model if available
-            if hasattr(self.model.model, 'names'):
-                self.class_names = list(self.model.model.names.values())
+            # Get class names from model if available and not using COCO override
+            if hasattr(self.model.model, 'names') and not self.use_coco:
+                model_names = list(self.model.model.names.values())
+                self.class_names = model_names
+                print(f"✓ Using class names from model: {model_names}")
+            elif self.use_coco:
+                print(f"✓ Using COCO class names ({len(self.class_names)} classes)")
             
             print(f"✓ Model loaded successfully")
-            print(f"  - Classes: {self.class_names}")
+            print(f"  - Classes ({len(self.class_names)}): {self.class_names[:5]}{'...' if len(self.class_names) > 5 else ''}")
             print(f"  - Confidence threshold: {self.conf_threshold}")
             print(f"  - IoU threshold: {self.iou_threshold}")
             
@@ -412,6 +447,8 @@ def main():
                        help='Show detection results')
     parser.add_argument('--camera', type=int, default=0,
                        help='Camera ID for webcam detection')
+    parser.add_argument('--coco', action='store_true',
+                       help='Use COCO class names (80 classes) instead of model classes')
     
     args = parser.parse_args()
     
@@ -420,7 +457,8 @@ def main():
         detector = YOLOv8Detector(
             model_path=args.model,
             conf_threshold=args.conf,
-            iou_threshold=args.iou
+            iou_threshold=args.iou,
+            use_coco=args.coco
         )
         
         # Process based on source type
