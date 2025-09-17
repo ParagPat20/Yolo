@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['CAR', 'Heavy_Vehicle', 'NUM_PLATE', 'Person', 'crane-', 'jcb']
+
+roboflow:
+  workspace: iot-q3ahg
+  project: jech-fbc1d
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/iot-q3ahg/jech-fbc1d/dataset/1
