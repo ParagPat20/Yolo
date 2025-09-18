@@ -25,8 +25,8 @@ apt install -y vsftpd
 systemctl stop vsftpd
 
 # Create recordings directory with open permissions
-mkdir -p "/home/pi/$RECORDINGS_DIR"
-chmod 777 "/home/pi/$RECORDINGS_DIR"
+mkdir -p "/home/jecon/$RECORDINGS_DIR"
+chmod 777 "/home/jecon/$RECORDINGS_DIR"
 
 # Create a very simple vsftpd config - NO SECURITY!
 cat > /etc/vsftpd.conf << 'EOF'
@@ -40,7 +40,7 @@ anon_upload_enable=YES
 anon_mkdir_write_enable=YES
 anon_other_write_enable=YES
 anon_world_readable_only=NO
-anon_root=/home/pi
+anon_root=/home/jecon
 
 # Also allow local users
 local_enable=YES
@@ -110,7 +110,7 @@ if systemctl is-active --quiet vsftpd; then
     echo "Username: anonymous (or just press Enter)"
     echo "Password: (none - just press Enter)"
     echo ""
-    echo "📁 Files location: /home/pi/$RECORDINGS_DIR"
+    echo "📁 Files location: /home/jecon/$RECORDINGS_DIR"
     echo ""
     echo "🔗 Connection Examples:"
     echo "----------------------------------------"
@@ -126,7 +126,7 @@ if systemctl is-active --quiet vsftpd; then
     echo "ftp.retrlines('LIST')"
     echo ""
     echo "Your download command:"
-    echo "python download_videos.py --host $PI_IP --username anonymous --password ''"
+    echo "python downndet.py --host 192.168.29.235 --detection-only downloaded_videos --model best.pt --classes "17,19,27,42,51,55,80""
     echo "========================================="
 else
     echo "❌ Failed to start FTP server"
@@ -135,8 +135,8 @@ else
 fi
 
 # Create a simple test file
-echo "FTP Server Test File - $(date)" > "/home/pi/$RECORDINGS_DIR/test.txt"
-chmod 666 "/home/pi/$RECORDINGS_DIR/test.txt"
+echo "FTP Server Test File - $(date)" > "/home/jecon/$RECORDINGS_DIR/test.txt"
+chmod 666 "/home/jecon/$RECORDINGS_DIR/test.txt"
 
 echo ""
-echo "✅ Setup complete! Test file created at /home/pi/$RECORDINGS_DIR/test.txt"
+echo "✅ Setup complete! Test file created at /home/jecon/$RECORDINGS_DIR/test.txt"
