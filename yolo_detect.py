@@ -23,6 +23,8 @@ parser.add_argument('--resolution', help='Resolution in WxH to display inference
                     default=None)
 parser.add_argument('--record', help='Record results from video or webcam and save it as "demo1.avi". Must specify --resolution argument to record.',
                     action='store_true')
+parser.add_argument('--classes', help='Comma-separated list of class indices to detect (example: "0,2,5" or "0-10,15"). Leave empty for all classes.',
+                    default=None)
 
 args = parser.parse_args()
 
@@ -34,6 +36,27 @@ min_thresh = args.thresh
 user_res = args.resolution
 record = args.record
 
+# Parse classes argument
+def parse_classes_argument(classes_str, total_classes):
+    """Parse the --classes argument to get enabled class indices."""
+    if not classes_str:
+        return set(range(total_classes))  # All classes enabled by default
+    
+    enabled = []
+    parts = classes_str.split(',')
+    
+    for part in parts:
+        part = part.strip()
+        if '-' in part and not part.startswith('-'):
+            # Range like "0-5"
+            start, end = map(int, part.split('-'))
+            enabled.extend(range(start, end + 1))
+        else:
+            # Single class index
+            enabled.append(int(part))
+    
+    return set(enabled)  # Remove duplicates
+
 # Check if model file exists and is valid
 if (not os.path.exists(model_path)):
     print('ERROR: Model path is invalid or model was not found. Make sure the model filename was entered correctly.')
@@ -42,6 +65,19 @@ if (not os.path.exists(model_path)):
 # Load the model into memory and get labemap
 model = YOLO(model_path, task='detect')
 labels = model.names
+
+# Parse enabled classes
+try:
+    enabled_classes = parse_classes_argument(args.classes, len(labels))
+    print(f"Enabled classes: {sorted(enabled_classes)}")
+    if args.classes:
+        print("Enabled class names:")
+        for class_idx in sorted(enabled_classes):
+            if class_idx in labels:
+                print(f"  {class_idx}: {labels[class_idx]}")
+except ValueError as e:
+    print(f"Error parsing --classes argument: {e}")
+    sys.exit(1)
 
 # Parse input to determine if image source is a file, folder, video, or USB camera
 img_ext_list = ['.jpg','.JPG','.jpeg','.JPEG','.png','.PNG','.bmp','.BMP']
@@ -173,24 +209,37 @@ while True:
 
     # Go through each detection and get bbox coords, confidence, and class
     for i in range(len(detections)):
-
-        # Get bounding box coordinates
-        # Ultralytics returns results in Tensor format, which have to be converted to a regular Python array
-        xyxy_tensor = detections[i].xyxy.cpu() # Detections in Tensor format in CPU memory
-        xyxy = xyxy_tensor.numpy().squeeze() # Convert tensors to Numpy array
-        xmin, ymin, xmax, ymax = xyxy.astype(int) # Extract individual coordinates and convert to int
-
         # Get bounding box class ID and name
         classidx = int(detections[i].cls.item())
+        
+        # Skip if this class is not enabled
+        if classidx not in enabled_classes:
+            continue
+            
         classname = labels[classidx]
 
         # Get bounding box confidence
         conf = detections[i].conf.item()
 
         # Draw box if confidence threshold is high enough
-        if conf > 0.5:
+        if conf > min_thresh:
+            # Get bounding box coordinates
+            # Ultralytics returns results in Tensor format, which have to be converted to a regular Python array
+            xyxy_tensor = detections[i].xyxy.cpu() # Detections in Tensor format in CPU memory
+            xyxy = xyxy_tensor.numpy().squeeze() # Convert tensors to Numpy array
+            xmin, ymin, xmax, ymax = xyxy.astype(int) # Extract individual coordinates and convert to int
 
-            color = bbox_colors[classidx % 10]
+            # Choose color - special colors for custom classes
+            if classname.lower() in ['crane-', 'jcb', 'numplate']:
+                if classname.lower() == 'crane-':
+                    color = (255, 165, 0)  # Orange
+                elif classname.lower() == 'jcb':
+                    color = (255, 20, 147)  # Deep pink
+                elif classname.lower() == 'numplate':
+                    color = (0, 255, 0)  # Green
+            else:
+                color = bbox_colors[classidx % 10]
+            
             cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), color, 2)
 
             label = f'{classname}: {int(conf*100)}%'

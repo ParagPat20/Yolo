@@ -1,2 +1,4 @@
 yolo detect train model=yolo11n.pt data=data.yaml epochs=120 imgsz=640 batch=16 device=0
 yolo detect predict model=F:\JeCH_AeroTECH\TLYOLO\runs\detect\train\weights\best.pt source=0
+python yolo_detect.py --model=best_ncnn_model --source=usb0 --resolution=640x480
+python yolo_detect.py --model best_ncnn_model --source usb0 --classes "17,19,27,42,51,55,80"
