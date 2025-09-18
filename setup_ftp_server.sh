@@ -5,9 +5,9 @@
 # Usage: ./setup_ftp_server.sh [recordings_directory] [ftp_username]
 
 # Configuration
-RECORDINGS_DIR=${1:-"recordings"}
-FTP_USERNAME=${2:-"videouser"}
-FTP_PASSWORD=""
+RECORDINGS_DIR=${1:-"REC"}
+FTP_USERNAME=${2:-"JeCH"}
+FTP_PASSWORD="JeCH"
 FTP_PORT=21
 PASSIVE_MIN_PORT=10000
 PASSIVE_MAX_PORT=10100
