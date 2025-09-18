@@ -1,6 +1,6 @@
-description: Ultralytics best model trained on data.yaml
+description: Ultralytics YOLO11n model trained on data.yaml
 author: Ultralytics
-date: '2025-09-17T13:28:16.217834'
+date: '2025-09-18T12:23:10.639719'
 version: 8.3.152
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
@@ -11,12 +11,95 @@ imgsz:
 - 640
 - 640
 names:
-  0: CAR
-  1: Heavy_Vehicle
-  2: NUM_PLATE
-  3: Person
-  4: crane-
-  5: jcb
+  0: aeroplane
+  1: airplane
+  2: apple
+  3: backpack
+  4: banana
+  5: baseball bat
+  6: baseball glove
+  7: bear
+  8: bed
+  9: bench
+  10: bicycle
+  11: bird
+  12: boat
+  13: book
+  14: bottle
+  15: bowl
+  16: broccoli
+  17: bus
+  18: cake
+  19: car
+  20: carrot
+  21: cat
+  22: cell phone
+  23: chair
+  24: clock
+  25: couch
+  26: cow
+  27: crane-
+  28: cup
+  29: dining table
+  30: diningtable
+  31: dog
+  32: donut
+  33: elephant
+  34: fire hydrant
+  35: fork
+  36: frisbee
+  37: giraffe
+  38: hair drier
+  39: handbag
+  40: horse
+  41: hot dog
+  42: jcb
+  43: keyboard
+  44: kite
+  45: knife
+  46: laptop
+  47: microwave
+  48: motorbike
+  49: motorcycle
+  50: mouse
+  51: numplate
+  52: orange
+  53: oven
+  54: parking meter
+  55: person
+  56: pizza
+  57: potted plant
+  58: pottedplant
+  59: refrigerator
+  60: remote
+  61: sandwich
+  62: scissors
+  63: sheep
+  64: sink
+  65: skateboard
+  66: skis
+  67: snowboard
+  68: sofa
+  69: spoon
+  70: sports ball
+  71: stop sign
+  72: suitcase
+  73: surfboard
+  74: teddy bear
+  75: tennis racket
+  76: tie
+  77: toaster
+  78: toilet
+  79: toothbrush
+  80: traffic light
+  81: train
+  82: truck
+  83: tv
+  84: tvmonitor
+  85: umbrella
+  86: vase
+  87: wine glass
+  88: zebra
 args:
   batch: 1
   half: false

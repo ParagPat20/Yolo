@@ -1,8 +1,8 @@
 
-JeCH - v1 2025-09-17 12:40pm
+JeCHwCOCO - v2 2025-09-18 10:36am
 ==============================
 
-This dataset was exported via roboflow.com on September 17, 2025 at 7:10 AM GMT
+This dataset was exported via roboflow.com on September 18, 2025 at 5:07 AM GMT
 
 Roboflow is an end-to-end computer vision platform that helps you
 * collaborate with your team on computer vision projects
@@ -17,11 +17,10 @@ visit https://github.com/roboflow/notebooks
 
 To find over 100k other datasets and pre-trained models, visit https://universe.roboflow.com
 
-The dataset includes 2256 images.
+The dataset includes 4730 images.
 Person-JCB-CRANE-CAR-HV-NUMP are annotated in YOLOv11 format.
 
 The following pre-processing was applied to each image:
-* Auto-orientation of pixel data (with EXIF-orientation stripping)
 
 No image augmentation techniques were applied.
 
