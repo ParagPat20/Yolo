@@ -20,12 +20,16 @@ logger = logging.getLogger(__name__)
 
 # Raspberry Pi camera imports
 try:
+    # Check if we should force OpenCV fallback
+    if os.environ.get('FORCE_OPENCV_CAMERA', '').lower() in ('1', 'true', 'yes'):
+        raise ImportError("Forcing OpenCV camera due to environment variable")
+    
     from picamera2 import Picamera2, Preview
     PICAMERA2_AVAILABLE = True
     logger.info("📷 Picamera2 available for Raspberry Pi")
-except ImportError:
+except ImportError as e:
     PICAMERA2_AVAILABLE = False
-    logger.warning("📷 Picamera2 not available, falling back to OpenCV")
+    logger.warning(f"📷 Picamera2 not available: {e}, falling back to OpenCV")
 
 class EnhancedFaceDetector:
     """
