@@ -28,3 +28,5 @@ Thumbs.db
 
 /downloaded_videos/
 /detection_results/
+
+/DNN_RECOGNISE/models/arcface_r100.onnx
