@@ -1363,12 +1363,8 @@ def initialize_camera(camera_index: int = 0):
                 display="lores"
             )
             picam2.configure(preview_config)
-            
-            # Set frame rate
-            picam2.set_controls({"FrameRate": CAMERA['fps']})
-            
             # Set autofocus mode
-            picam2.set_controls({"AfMode": 2, "AfTrigger": 1, "FrameRate": CAMERA['fps']})  # Normal AF
+            picam2.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})  # Normal AF
             
             # Start camera
             picam2.start()
