@@ -1,7 +1,6 @@
-# Advanced Person Tracking and Face Recognition System for Raspberry Pi
+# Advanced Person Tracking and Face Recognition System
 # Using state-of-the-art models: YOLOv8 for person detection, YOLO-Face for face detection,
 # ArcFace for face recognition, and ByteTrack for person tracking
-# Optimized for Raspberry Pi with picamera2 and continuous autofocus
 # At the top of your Python script inside venv
 import sys
 sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
@@ -23,9 +22,6 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from collections import defaultdict, deque
 
-# Raspberry Pi camera imports
-from picamera2 import Picamera2, Preview
-
 from settings.settings import (
     CAMERA, PERSON_DETECTION, FACE_DETECTION, FACE_RECOGNITION, 
     PERSON_TRACKING, FACE_TRACKING, SECURITY, PATHS
@@ -35,6 +31,15 @@ from settings.settings import (
 # Configure logging first
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Raspberry Pi camera imports
+try:
+    from picamera2 import Picamera2, Preview
+    PICAMERA2_AVAILABLE = True
+    logger.info("📷 Picamera2 available for Raspberry Pi")
+except ImportError:
+    PICAMERA2_AVAILABLE = False
+    logger.warning("📷 Picamera2 not available, falling back to OpenCV")
 
 # Try to import sound libraries
 try:
@@ -1344,102 +1349,52 @@ class AdvancedPersonTracker:
         
         return annotated
 
-class PiCameraManager:
-    """Raspberry Pi Camera Manager with autofocus"""
-    
-    def __init__(self):
-        self.picam2 = None
-        self.last_af_trigger = 0
-        self.af_interval = 1.0  # Trigger autofocus every 1 second
-        self.is_initialized = False
-        self.frame_skip_count = 0
-        self.frame_skip_interval = 2  # Process every 3rd frame for better performance on Pi
-        
-    def initialize(self) -> bool:
-        """Initialize Raspberry Pi camera with autofocus"""
-        try:
-            self.picam2 = Picamera2()
+def initialize_camera(camera_index: int = 0):
+    """Initialize camera with enhanced settings - supports both picamera2 and OpenCV"""
+    try:
+        if PICAMERA2_AVAILABLE:
+            # Use picamera2 for Raspberry Pi
+            picam2 = Picamera2()
             
-            # Configure preview with high resolution for processing and low-res for display
-            preview_config = self.picam2.create_preview_configuration(
-                main={"size": (CAMERA['width'], CAMERA['height'])},  # High-res for processing
-                lores={"size": (640, 360)},   # Low-res display stream
+            # Configure preview with high resolution and low-res display stream
+            preview_config = picam2.create_preview_configuration(
+                main={"size": (CAMERA['width'], CAMERA['height'])},  # High resolution for processing
+                lores={"size": (640, 360)},   # Low-res display stream for performance
                 display="lores"
             )
+            picam2.configure(preview_config)
             
-            self.picam2.configure(preview_config)
-            self.picam2.set_controls({"FrameRate": CAMERA['fps']})
-            
-            # Start preview
-            self.picam2.start_preview(Preview.QTGL)
-            self.picam2.start()
+            # Set frame rate
+            picam2.set_controls({"FrameRate": CAMERA['fps']})
             
             # Set autofocus mode
-            self.picam2.set_controls({"AfMode": 1})  # Normal AF
+            picam2.set_controls({"AfMode": 1})  # Normal AF
             
-            self.is_initialized = True
-            logger.info(f"✅ Pi Camera initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps with autofocus")
-            return True
+            # Start camera
+            picam2.start()
             
-        except Exception as e:
-            logger.error(f"Error initializing Pi camera: {e}")
-            return False
-    
-    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Read frame from Pi camera with autofocus management and frame skipping for performance"""
-        if not self.is_initialized or self.picam2 is None:
-            return False, None
-        
-        try:
-            # Trigger autofocus periodically for continuous AF
-            current_time = time.time()
-            if current_time - self.last_af_trigger > self.af_interval:
-                self.picam2.set_controls({"AfTrigger": 1})
-                self.last_af_trigger = current_time
-            
-            # Capture frame
-            frame = self.picam2.capture_array()
-            
-            # Convert from RGB to BGR for OpenCV compatibility
-            if len(frame.shape) == 3:
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            
-            # Frame skipping for better performance on Raspberry Pi
-            self.frame_skip_count += 1
-            if self.frame_skip_count <= self.frame_skip_interval:
-                return True, frame  # Return frame for processing
-            else:
-                self.frame_skip_count = 0
-                return False, None  # Skip this frame for performance
-            
-        except Exception as e:
-            logger.error(f"Error reading from Pi camera: {e}")
-            return False, None
-    
-    def release(self):
-        """Release camera resources"""
-        if self.picam2 is not None:
-            try:
-                self.picam2.stop_preview()
-                self.picam2.close()
-                logger.info("📷 Pi Camera released")
-            except Exception as e:
-                logger.error(f"Error releasing Pi camera: {e}")
-            finally:
-                self.picam2 = None
-                self.is_initialized = False
-
-def initialize_camera(camera_index: int = 0) -> Optional[PiCameraManager]:
-    """Initialize Raspberry Pi camera with autofocus"""
-    try:
-        cam_manager = PiCameraManager()
-        if cam_manager.initialize():
-            return cam_manager
+            logger.info(f"✅ Picamera2 initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps with autofocus")
+            return picam2
         else:
-            return None
+            # Fallback to OpenCV for non-Raspberry Pi systems
+            cam = cv2.VideoCapture(camera_index)
+            if not cam.isOpened():
+                logger.error("Could not open webcam")
+                return None
+            
+            # Set camera properties
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA['width'])
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA['height'])
+            cam.set(cv2.CAP_PROP_FPS, CAMERA['fps'])
+            
+            # Try to enable auto-exposure and auto-focus if available
+            cam.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+            
+            logger.info(f"✅ OpenCV camera initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps")
+            return cam
         
     except Exception as e:
-        logger.error(f"Error initializing Pi camera: {e}")
+        logger.error(f"Error initializing camera: {e}")
         return None
 
 if __name__ == "__main__":
@@ -1454,8 +1409,7 @@ if __name__ == "__main__":
         # Initialize tracker
         tracker = AdvancedPersonTracker()
         
-        logger.info("🎯 Smart Security System Ready on Raspberry Pi!")
-        logger.info("📷 Pi Camera with autofocus: Active")
+        logger.info("🎯 Smart Security System Ready!")
         logger.info("🔊 Sound alerts: " + ("Enabled" if tracker.sound_system.sound_enabled else "Disabled"))
         logger.info("🗣️ Voice alerts: " + ("Enabled" if tracker.sound_system.voice_enabled else "Disabled"))
         logger.info("")
@@ -1464,7 +1418,6 @@ if __name__ == "__main__":
         logger.info("  ✅ Face verification requests")
         logger.info("  ✅ Unknown person alerts with siren")
         logger.info("  ✅ Trusted person memory (5 minutes)")
-        logger.info("  ✅ Raspberry Pi camera with continuous autofocus")
         logger.info("")
         logger.info("🎮 Controls:")
         logger.info("  - ESC/Q: Exit")
@@ -1476,16 +1429,37 @@ if __name__ == "__main__":
         
         frame_count = 0
         fps_counter = time.time()
+        last_af_trigger = 0  # For autofocus timing
         
         while True:
-            ret, frame = cam.read()
+            # Read frame based on camera type
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'capture_array'):
+                # picamera2 frame reading
+                try:
+                    frame = cam.capture_array("main")
+                    # Convert from RGB to BGR for OpenCV
+                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    ret = True
+                except Exception as e:
+                    logger.warning(f"Failed to capture frame: {e}")
+                    ret = False
+            else:
+                # OpenCV frame reading
+                ret, frame = cam.read()
+            
             if not ret:
-                if frame is None:
-                    # Frame skipped for performance - continue to next frame
-                    continue
-                else:
-                    logger.warning("Failed to grab frame from Pi camera")
-                    continue
+                logger.warning("Failed to grab frame")
+                continue
+            
+            # Trigger autofocus periodically for picamera2
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'set_controls'):
+                current_time = time.time()
+                if current_time - last_af_trigger > 1.0:  # Trigger AF every second
+                    try:
+                        cam.set_controls({"AfTrigger": 1})
+                        last_af_trigger = current_time
+                    except Exception as e:
+                        logger.debug(f"AF trigger failed: {e}")
             
             # Process frame
             annotated_frame, tracks = tracker.process_frame(frame)
@@ -1558,5 +1532,19 @@ if __name__ == "__main__":
         
     finally:
         if 'cam' in locals():
-            cam.release()
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'stop'):
+                # picamera2 cleanup
+                try:
+                    cam.stop()
+                    cam.close()
+                    logger.info("📷 Picamera2 stopped and closed")
+                except Exception as e:
+                    logger.error(f"Error closing picamera2: {e}")
+            else:
+                # OpenCV cleanup
+                try:
+                    cam.release()
+                    logger.info("📷 OpenCV camera released")
+                except Exception as e:
+                    logger.error(f"Error releasing camera: {e}")
         cv2.destroyAllWindows()

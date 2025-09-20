@@ -1,11 +1,9 @@
 # Suppress macOS warning
-
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
 # At the top of your Python script inside venv
 import sys
 sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
-
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning)
 
 import json
 import cv2
@@ -19,6 +17,15 @@ from settings.settings import CAMERA, FACE_DETECTION, TRAINING, PATHS, FACE_RECO
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Raspberry Pi camera imports
+try:
+    from picamera2 import Picamera2, Preview
+    PICAMERA2_AVAILABLE = True
+    logger.info("📷 Picamera2 available for Raspberry Pi")
+except ImportError:
+    PICAMERA2_AVAILABLE = False
+    logger.warning("📷 Picamera2 not available, falling back to OpenCV")
 
 class EnhancedFaceDetector:
     """
@@ -274,24 +281,52 @@ def save_name(face_id: int, face_name: str, filename: str) -> None:
         logger.error(f"Error saving name mapping: {e}")
         raise
 
-def initialize_camera(camera_index: int = 0) -> Optional[cv2.VideoCapture]:
+def initialize_camera(camera_index: int = 0):
     """
-    Initialize the camera with error handling
+    Initialize the camera with error handling - supports both picamera2 and OpenCV
     
     Parameters:
         camera_index (int): Camera device index
     Returns:
-        cv2.VideoCapture or None: Initialized camera object
+        Camera object or None: Initialized camera object
     """
     try:
-        cam = cv2.VideoCapture(camera_index)
-        if not cam.isOpened():
-            logger.error("Could not open webcam")
-            return None
+        if PICAMERA2_AVAILABLE:
+            # Use picamera2 for Raspberry Pi
+            picam2 = Picamera2()
             
-        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA['width'])
-        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA['height'])
-        return cam
+            # Configure preview with high resolution and low-res display stream
+            preview_config = picam2.create_preview_configuration(
+                main={"size": (CAMERA['width'], CAMERA['height'])},  # High resolution for processing
+                lores={"size": (640, 360)},   # Low-res display stream for performance
+                display="lores"
+            )
+            picam2.configure(preview_config)
+            
+            # Set frame rate
+            picam2.set_controls({"FrameRate": CAMERA.get('fps', 30)})
+            
+            # Set autofocus mode
+            picam2.set_controls({"AfMode": 1})  # Normal AF
+            
+            # Start camera
+            picam2.start()
+            
+            logger.info(f"✅ Picamera2 initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA.get('fps', 30)}fps with autofocus")
+            return picam2
+        else:
+            # Fallback to OpenCV for non-Raspberry Pi systems
+            cam = cv2.VideoCapture(camera_index)
+            if not cam.isOpened():
+                logger.error("Could not open webcam")
+                return None
+                
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA['width'])
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA['height'])
+            
+            logger.info(f"✅ OpenCV camera initialized: {CAMERA['width']}x{CAMERA['height']}")
+            return cam
+            
     except Exception as e:
         logger.error(f"Error initializing camera: {e}")
         return None
@@ -332,12 +367,37 @@ if __name__ == '__main__':
         quality_threshold = 50  # Minimum face size for good quality
         last_capture_time = 0
         capture_interval = 0.3  # Minimum time between captures
+        last_af_trigger = 0  # For autofocus timing
         
         while True:
-            ret, img = cam.read()
+            # Read frame based on camera type
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'capture_array'):
+                # picamera2 frame reading
+                try:
+                    img = cam.capture_array("main")
+                    # Convert from RGB to BGR for OpenCV
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    ret = True
+                except Exception as e:
+                    logger.warning(f"Failed to capture frame: {e}")
+                    ret = False
+            else:
+                # OpenCV frame reading
+                ret, img = cam.read()
+            
             if not ret:
                 logger.warning("Failed to grab frame")
                 continue
+            
+            # Trigger autofocus periodically for picamera2
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'set_controls'):
+                current_time = time.time()
+                if current_time - last_af_trigger > 1.0:  # Trigger AF every second
+                    try:
+                        cam.set_controls({"AfTrigger": 1})
+                        last_af_trigger = current_time
+                    except Exception as e:
+                        logger.debug(f"AF trigger failed: {e}")
                 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
@@ -433,5 +493,19 @@ if __name__ == '__main__':
         
     finally:
         if 'cam' in locals():
-            cam.release()
+            if PICAMERA2_AVAILABLE and hasattr(cam, 'stop'):
+                # picamera2 cleanup
+                try:
+                    cam.stop()
+                    cam.close()
+                    logger.info("📷 Picamera2 stopped and closed")
+                except Exception as e:
+                    logger.error(f"Error closing picamera2: {e}")
+            else:
+                # OpenCV cleanup
+                try:
+                    cam.release()
+                    logger.info("📷 OpenCV camera released")
+                except Exception as e:
+                    logger.error(f"Error releasing camera: {e}")
         cv2.destroyAllWindows()
