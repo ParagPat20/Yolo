@@ -1452,7 +1452,7 @@ if __name__ == "__main__":
                 current_time = time.time()
                 if current_time - last_af_trigger > 1.0:  # Trigger AF every second
                     try:
-                        cam.set_controls({"AfTrigger": 1})
+                        cam.set_controls({"AfTrigger": 0})
                         last_af_trigger = current_time
                     except Exception as e:
                         logger.debug(f"AF trigger failed: {e}")
