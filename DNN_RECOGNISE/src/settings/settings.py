@@ -6,8 +6,8 @@ import os
 # Camera settings
 CAMERA = {
     'index': 0,  # Default camera (0 is usually built-in webcam)
-    'width': 640,  # Higher resolution for better detection
-    'height': 480,
+    'width': 1920,  # Higher resolution for better detection
+    'height': 1080,
     'fps': 60,  # Target FPS
 }
 
