@@ -2,7 +2,10 @@
 """
 Test script for Raspberry Pi camera integration
 Run this to verify picamera2 is working correctly
-"""
+"""# At the top of your Python script inside venv
+import sys
+sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
+
 
 import time
 import cv2

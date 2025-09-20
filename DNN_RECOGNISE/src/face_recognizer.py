@@ -1,5 +1,8 @@
 # Enhanced Face Recognition System with Advanced Person Tracking
 # This file now integrates with the new advanced person tracking system
+# At the top of your Python script inside venv
+import sys
+sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
 
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)

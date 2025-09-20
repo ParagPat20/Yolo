@@ -2,6 +2,9 @@
 # Using state-of-the-art models: YOLOv8 for person detection, YOLO-Face for face detection,
 # ArcFace for face recognition, and ByteTrack for person tracking
 # Optimized for Raspberry Pi with picamera2 and continuous autofocus
+# At the top of your Python script inside venv
+import sys
+sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
 
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)

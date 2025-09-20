@@ -3,6 +3,9 @@
 Test script for the Advanced Person Tracking System
 Tests various components and configurations
 """
+# At the top of your Python script inside venv
+import sys
+sys.path.append('/usr/lib/python3/dist-packages')  # Path to system Python packages
 
 import os
 import sys
