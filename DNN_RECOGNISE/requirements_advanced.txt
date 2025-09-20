@@ -1,0 +1,59 @@
+# Advanced Person Tracking and Face Recognition System Requirements
+
+# Core computer vision libraries
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
+
+# Deep learning frameworks
+numpy>=1.21.0
+scipy>=1.7.0
+
+# ONNX Runtime for model inference
+onnxruntime>=1.15.0
+onnxruntime-gpu>=1.15.0  # Optional: for GPU acceleration
+
+# Image processing
+Pillow>=9.0.0
+scikit-image>=0.19.0
+
+# Data handling
+pandas>=1.3.0
+pickle5>=0.0.11
+
+# Tracking algorithms
+filterpy>=1.4.5  # For Kalman filters in tracking
+lap>=0.4.0  # Linear assignment problem solver for tracking
+
+# Visualization and GUI
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Utilities
+tqdm>=4.62.0
+colorama>=0.4.4
+
+# Sound effects for alerts
+pygame>=2.1.0  # For sound alerts and voice notifications
+pyttsx3>=2.90  # For text-to-speech alerts
+
+# Optional: Email alerts
+# smtplib  # Built-in Python module
+# email  # Built-in Python module
+
+# Optional: Advanced tracking (if implementing DeepSORT)
+# torch>=1.10.0
+# torchvision>=0.11.0
+
+# Development and debugging
+logging>=0.4.9.6
+argparse>=1.4.0
+
+# File handling
+json5>=0.9.6
+pathlib>=1.0.1
+
+# Mathematical operations
+scikit-learn>=1.0.0
+
+# Time and date handling
+datetime>=4.7
