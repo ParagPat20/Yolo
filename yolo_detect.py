@@ -115,6 +115,7 @@ else:
 
 # Parse user-specified display resolution
 resize = False
+resW, resH = None, None  # Initialize resolution variables
 if user_res:
     resize = True
     resW, resH = int(user_res.split('x')[0]), int(user_res.split('x')[1])
@@ -195,7 +196,7 @@ elif source_type == 'video' or source_type == 'usb':
 
 elif source_type == 'picamera':
     # Initialize picamera2 with specified resolution
-    resolution = (resW, resH) if user_res else None
+    resolution = (resW, resH) if user_res and resW is not None and resH is not None else None
     cap = initialize_picamera2(resolution)
     if cap is None:
         print("ERROR: Failed to initialize picamera2. Exiting.")
