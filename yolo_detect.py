@@ -132,14 +132,14 @@ def initialize_picamera2(resolution=None):
         # Configure camera with specified resolution or default
         if resolution:
             width, height = resolution
-            config = picam2.create_video_configuration(
-                main={"size": (width, height), "format": 'XRGB8888'},
+            config = picam2.create_preview_configuration(
+                main={"size": (width, height)},  # High resolution for processing
                 lores={"size": (640, 360)},  # Low-res display stream for performance
                 display="lores"
             )
         else:
-            config = picam2.create_video_configuration(
-                main={"size": (1920, 1080), "format": 'XRGB8888'},
+            config = picam2.create_preview_configuration(
+                main={"size": (1920, 1080)},  # High resolution for processing
                 lores={"size": (640, 360)},
                 display="lores"
             )
