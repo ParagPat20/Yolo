@@ -8,13 +8,22 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+# Raspberry Pi camera imports
+try:
+    from picamera2 import Picamera2, Preview
+    PICAMERA2_AVAILABLE = True
+    print("📷 Picamera2 available for Raspberry Pi")
+except ImportError:
+    PICAMERA2_AVAILABLE = False
+    print("📷 Picamera2 not available, falling back to OpenCV")
+
 # Define and parse user input arguments
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', help='Path to YOLO model file (example: "runs/detect/train/weights/best.pt")',
                     required=True)
 parser.add_argument('--source', help='Image source, can be image file ("test.jpg"), \
-                    image folder ("test_dir"), video file ("testvid.mp4"), or index of USB camera ("usb0")', 
+                    image folder ("test_dir"), video file ("testvid.mp4"), index of USB camera ("usb0"), or picamera ("picamera0")', 
                     required=True)
 parser.add_argument('--thresh', help='Minimum confidence threshold for displaying detected objects (example: "0.4")',
                     default=0.5)
@@ -110,9 +119,48 @@ if user_res:
     resize = True
     resW, resH = int(user_res.split('x')[0]), int(user_res.split('x')[1])
 
+def initialize_picamera2(resolution=None):
+    """Initialize picamera2 with specified resolution"""
+    if not PICAMERA2_AVAILABLE:
+        print("ERROR: Picamera2 not available. Please install picamera2 or use USB camera.")
+        return None
+    
+    try:
+        picam2 = Picamera2()
+        
+        # Configure camera with specified resolution or default
+        if resolution:
+            width, height = resolution
+            config = picam2.create_video_configuration(
+                main={"size": (width, height), "format": 'XRGB8888'},
+                lores={"size": (640, 360)},  # Low-res display stream for performance
+                display="lores"
+            )
+        else:
+            config = picam2.create_video_configuration(
+                main={"size": (1920, 1080), "format": 'XRGB8888'},
+                lores={"size": (640, 360)},
+                display="lores"
+            )
+        
+        picam2.configure(config)
+        
+        # Set autofocus mode
+        picam2.set_controls({"AfMode": 1, "AfTrigger": 0})
+        
+        # Start camera
+        picam2.start()
+        
+        print(f"✅ Picamera2 initialized successfully")
+        return picam2
+        
+    except Exception as e:
+        print(f"ERROR: Failed to initialize picamera2: {e}")
+        return None
+
 # Check if recording is valid and set up recording
 if record:
-    if source_type not in ['video','usb']:
+    if source_type not in ['video','usb','picamera']:
         print('Recording only works for video and camera sources. Please try again.')
         sys.exit(0)
     if not user_res:
@@ -146,10 +194,12 @@ elif source_type == 'video' or source_type == 'usb':
         ret = cap.set(4, resH)
 
 elif source_type == 'picamera':
-    from picamera2 import Picamera2
-    cap = Picamera2()
-    cap.configure(cap.create_video_configuration(main={"format": 'XRGB8888', "size": (resW, resH)}))
-    cap.start()
+    # Initialize picamera2 with specified resolution
+    resolution = (resW, resH) if user_res else None
+    cap = initialize_picamera2(resolution)
+    if cap is None:
+        print("ERROR: Failed to initialize picamera2. Exiting.")
+        sys.exit(1)
 
 # Set bounding box colors (using the Tableu 10 color scheme)
 bbox_colors = [(164,120,87), (68,148,228), (93,97,209), (178,182,133), (88,159,106), 
@@ -160,6 +210,7 @@ avg_frame_rate = 0
 frame_rate_buffer = []
 fps_avg_len = 200
 img_count = 0
+last_af_trigger = 0  # For autofocus timing
 
 # Begin inference loop
 while True:
@@ -187,12 +238,27 @@ while True:
             print('Unable to read frames from the camera. This indicates the camera is disconnected or not working. Exiting program.')
             break
 
-    elif source_type == 'picamera': # If source is a Picamera, grab frames using picamera interface
-        frame_bgra = cap.capture_array()
-        frame = cv2.cvtColor(np.copy(frame_bgra), cv2.COLOR_BGRA2BGR)
-        if (frame is None):
-            print('Unable to read frames from the Picamera. This indicates the camera is disconnected or not working. Exiting program.')
+    elif source_type == 'picamera': # If source is a Picamera, grab frames using picamera2 interface
+        try:
+            frame = cap.capture_array("main")
+            # Convert from RGB to BGR for OpenCV
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            if (frame is None):
+                print('Unable to read frames from the Picamera. This indicates the camera is disconnected or not working. Exiting program.')
+                break
+        except Exception as e:
+            print(f'Error capturing frame from Picamera: {e}. Exiting program.')
             break
+
+    # Trigger autofocus periodically for picamera2
+    if source_type == 'picamera' and PICAMERA2_AVAILABLE:
+        current_time = time.time()
+        if current_time - last_af_trigger > 1.0:  # Trigger AF every second
+            try:
+                cap.set_controls({"AfTrigger": 0})
+                last_af_trigger = current_time
+            except Exception as e:
+                pass  # Silently ignore AF trigger failures
 
     # Resize frame to desired display resolution
     if resize == True:
@@ -292,6 +358,11 @@ print(f'Average pipeline FPS: {avg_frame_rate:.2f}')
 if source_type == 'video' or source_type == 'usb':
     cap.release()
 elif source_type == 'picamera':
-    cap.stop()
+    try:
+        cap.stop()
+        cap.close()
+        print("📷 Picamera2 stopped and closed")
+    except Exception as e:
+        print(f"Error closing picamera2: {e}")
 if record: recorder.release()
 cv2.destroyAllWindows()
