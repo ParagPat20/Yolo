@@ -1258,7 +1258,7 @@ class AdvancedPersonTracker:
                     logger.warning(f"🚨 Person {track.track_id} failed {track.max_verification_attempts} verification attempts - marking as UNKNOWN")
                     track.is_known = False
                     track.is_trusted = False
-                    self._handle_unknown_person_verified(track, face_roi, current_time, frame)
+                    self._handle_unknown_person_verified(track, face_roi, current_time)
                 else:
                     # Still attempting verification - request face verification again
                     remaining_attempts = track.max_verification_attempts - track.verification_attempts
