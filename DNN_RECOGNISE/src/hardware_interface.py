@@ -243,6 +243,8 @@ class BluetoothSpeaker:
         self.connected = False
         self.skip_connect = HARDWARE.get('bt_skip_connect', False)
         self.use_system_audio = HARDWARE.get('bt_use_system_audio', False)
+        self._tts_lock = threading.Lock()
+        self._tts_proc = None
 
         # If configured to skip explicit bluetooth connection, assume audio path is ready
         if self.skip_connect:
@@ -291,6 +293,15 @@ class BluetoothSpeaker:
 
         def _speak_worker(message: str):
             try:
+                # Preempt any ongoing TTS
+                with self._tts_lock:
+                    try:
+                        if self._tts_proc and self._tts_proc.poll() is None:
+                            self._tts_proc.terminate()
+                    except Exception:
+                        pass
+                    self._tts_proc = None
+
                 # Get voice configuration
                 engine = VOICE.get('engine', 'espeak-ng')
                 gender = VOICE.get('gender', 'female')
@@ -305,7 +316,9 @@ class BluetoothSpeaker:
                             cmd = ['espeak-ng', '-v', espeak_voice, '-s', str(speech_rate), '-p', str(pitch), '-a', str(volume), message]
                         else:
                             cmd = ['espeak-ng', '-v', 'en', '-s', str(speech_rate), '-p', str(pitch), '-a', str(volume), message]
-                        subprocess.run(cmd, capture_output=True, timeout=15)
+                        with self._tts_lock:
+                            self._tts_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self._tts_proc.wait(timeout=15)
                         logger.info("🗣️♀️ Spoken (espeak-ng)")
                         return
                     except Exception as e:
@@ -318,7 +331,9 @@ class BluetoothSpeaker:
                             cmd = ['bash', '-lc', f"echo '(voice_{festival_voice}) (SayText \"{message}\")' | festival"]
                         else:
                             cmd = ['bash', '-lc', f"echo '(voice_cmu_us_rms_cg) (SayText \"{message}\")' | festival"]
-                        subprocess.run(cmd, capture_output=True, timeout=15)
+                        with self._tts_lock:
+                            self._tts_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self._tts_proc.wait(timeout=15)
                         logger.info("🗣️♀️ Spoken (festival)")
                         return
                     except Exception as e:
@@ -326,7 +341,9 @@ class BluetoothSpeaker:
 
                 # Final fallback
                 try:
-                    subprocess.run(['espeak-ng', '-v', 'en+f3', '-s', '140', message], capture_output=True, timeout=10)
+                    with self._tts_lock:
+                        self._tts_proc = subprocess.Popen(['espeak-ng', '-v', 'en+f3', '-s', '140', message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self._tts_proc.wait(timeout=10)
                     logger.info("🗣️♀️ Spoken (fallback)")
                 except Exception as e:
                     logger.error(f"All TTS methods failed: {e}")

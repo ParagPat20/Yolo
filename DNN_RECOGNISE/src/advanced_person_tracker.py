@@ -899,6 +899,8 @@ class AdvancedPersonTracker:
     
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, List[PersonTrack]]:
         """Process a single frame and return annotated frame with tracks - enhanced for CCTV"""
+        # Keep a reference to the latest frame for saving tasks
+        self._last_frame = frame
         # Detect persons
         person_detections = self.person_detector.detect_persons(frame)
 
@@ -1369,7 +1371,7 @@ class AdvancedPersonTracker:
                 logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - treating as unverified")
                 self._handle_unknown_person_timeout(track, current_time)
     
-    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: np.ndarray):
+    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""
         if not track.siren_played:
             # Play siren and alert for unknown face
@@ -1385,7 +1387,14 @@ class AdvancedPersonTracker:
             if SECURITY['log_unknown_faces']:
                 self._save_unknown_face(face_roi, track.track_id)
                 # Also save full body photograph
-                self._save_unknown_person_full_body(frame, track)
+                try:
+                    frame_to_save = frame if frame is not None else getattr(self, '_last_frame', None)
+                    if frame_to_save is not None:
+                        self._save_unknown_person_full_body(frame_to_save, track)
+                    else:
+                        logger.warning("No frame available to save full body for unknown person")
+                except Exception as e:
+                    logger.error(f"Error saving unknown full body: {e}")
             
             track.siren_played = True
             track.alert_sent = True
