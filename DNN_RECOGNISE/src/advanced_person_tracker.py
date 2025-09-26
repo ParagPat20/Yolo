@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from collections import defaultdict, deque
 
 from settings.settings import (
-    CAMERA, PERSON_DETECTION, FACE_DETECTION, FACE_RECOGNITION, 
-    PERSON_TRACKING, FACE_TRACKING, SECURITY, PATHS
+    CAMERA, PERSON_DETECTION, FACE_DETECTION, FACE_RECOGNITION,
+    PERSON_TRACKING, FACE_TRACKING, SECURITY, PATHS, CCTV, AUDIO, HARDWARE
 )
 
 
@@ -40,6 +40,15 @@ try:
 except ImportError:
     PICAMERA2_AVAILABLE = False
     logger.warning("📷 Picamera2 not available, falling back to OpenCV")
+
+# Try to import hardware interface
+try:
+    from hardware_interface import get_hardware_manager
+    HARDWARE_AVAILABLE = True
+    logger.info("🔧 Hardware interface available")
+except ImportError:
+    HARDWARE_AVAILABLE = False
+    logger.warning("🔧 Hardware interface not available")
 
 # Try to import sound libraries
 try:
@@ -91,11 +100,23 @@ class PersonTrack:
     needs_face_check: bool = True  # New person needs face verification
     siren_played: bool = False  # Whether siren has been played for this person
     
-    # Triple verification system
+    # Enhanced verification system
     verification_attempts: int = 0  # Number of failed verification attempts
-    max_verification_attempts: int = 3  # Require 3 failed attempts before unknown alert
+    max_verification_attempts: int = CCTV['max_verification_attempts']  # Configurable attempts
     last_verification_attempt: float = 0.0  # Time of last verification attempt
-    verification_attempt_cooldown: float = 2.0  # Seconds between attempts
+    verification_attempt_cooldown: float = CCTV['verification_cooldown']  # Configurable cooldown
+    verification_start_time: float = 0.0  # When verification process started
+    unknown_timeout: float = CCTV['unknown_timeout']  # Time before marking as unknown
+    verification_timeout: float = CCTV['verification_timeout']  # Time to wait for verification
+    is_recording: bool = False  # Whether this person is being recorded
+    recording_start_time: float = 0.0  # When recording started
+    last_greeting_time: float = 0.0  # Last time this person was greeted
+
+    # Guest Mode fields
+    is_guest: bool = False  # Whether this person is a guest
+    guest_associated_with: Optional[str] = None  # Name of the verified person they're associated with
+    guest_mode_start_time: float = 0.0  # When guest mode started for this person
+    trajectory_history: deque = None  # Store recent trajectory points for guest detection
 
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
@@ -617,6 +638,10 @@ class ByteTracker:
                     track.confidence = detection['confidence']
                     track.last_seen = current_time
                     track.frames_since_recognition += 1
+
+                    # Update trajectory history for guest detection
+                    if track.trajectory_history is not None:
+                        track.trajectory_history.append(smoothed_center)
                     
                     matched_tracks.append(track_id)
                     unmatched_detections.remove(best_detection_idx)
@@ -635,7 +660,10 @@ class ByteTracker:
                     last_seen=current_time,
                     frames_since_recognition=0
                 )
-                
+
+                # Initialize trajectory history for guest detection
+                new_track.trajectory_history = deque(maxlen=10)  # Store last 10 trajectory points
+
                 # Check if there's a recently trusted person via parent tracker
                 if self.parent_tracker:
                     recently_trusted = self.parent_tracker._check_recently_trusted_for_new_track(current_time)
@@ -837,45 +865,243 @@ class AdvancedPersonTracker:
     
     def __init__(self):
         logger.info("🚀 Initializing Advanced Person Tracking System...")
-        
+
+        # Initialize hardware interface
+        self.hardware_manager = get_hardware_manager() if HARDWARE_AVAILABLE else None
+
         # Initialize components
         self.person_detector = YOLOv8PersonDetector()
         self.face_detector = SCRFDFaceDetector()
         self.face_recognizer = ArcFaceRecognizer()
         self.tracker = ByteTracker(parent_tracker=self)
         self.sound_system = WindowsSoundAlertSystem()
-        
+
         # Smart verification management
         self.last_unknown_alert = {}
         self.unknown_face_counter = 0
         self.trusted_persons = {}  # Store trusted person info {name: last_seen_time}
         self.global_trusted_memory = {}  # Global memory of recently verified persons
-        
+        self.greeting_history = {}  # Track recent greetings to avoid spam
+
+        # Recording management
+        self.recording_active = {}  # Track active recordings {track_id: video_writer}
+
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
         os.makedirs(PATHS.get('models_dir', 'models'), exist_ok=True)
-        
-        logger.info("✅ Advanced Person Tracking System with Smart Verification initialized")
+        os.makedirs('recordings', exist_ok=True)  # For video recordings
+
+        # Set initial status
+        if self.hardware_manager:
+            self.hardware_manager.set_system_status('ready')
+
+        logger.info("✅ Advanced Person Tracking System with CCTV Integration initialized")
     
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, List[PersonTrack]]:
-        """Process a single frame and return annotated frame with tracks"""
+        """Process a single frame and return annotated frame with tracks - enhanced for CCTV"""
+        # Keep a reference to the latest frame for saving tasks
+        self._last_frame = frame
         # Detect persons
         person_detections = self.person_detector.detect_persons(frame)
-        
+
         # Update person tracking
         person_tracks = self.tracker.update(person_detections)
-        
+
         # Process each tracked person
         for track in person_tracks:
             self._process_person_track(frame, track)
-        
+
+        # Check for guest mode activation
+        if CCTV['guest_mode_enabled']:
+            self._check_and_activate_guest_mode(person_tracks)
+
+        # Handle active recordings
+        self._update_recordings(frame, person_tracks)
+
         # Clean up old trusted memory entries
         self._cleanup_trusted_memory()
-        
+
+        # Check for guest mode timeout and reversion
+        if CCTV['guest_mode_enabled']:
+            self._check_guest_mode_timeout(person_tracks)
+
         # Draw annotations
         annotated_frame = self._draw_annotations(frame, person_tracks)
-        
+
         return annotated_frame, person_tracks
+
+    def _check_and_activate_guest_mode(self, tracks: List[PersonTrack]):
+        """Check if guest mode should be activated based on person context"""
+        current_time = time.time()
+
+        # Find verified and unknown persons
+        verified_persons = []
+        unknown_persons = []
+
+        for track in tracks:
+            if track.is_trusted and track.is_known:
+                verified_persons.append(track)
+            elif not track.is_known and not track.is_guest and not track.verification_requested:
+                # Only consider persons who are fully unknown (not in verification process)
+                unknown_persons.append(track)
+
+        # Check each unknown person to see if they're with a verified person
+        for unknown_track in unknown_persons:
+            for verified_track in verified_persons:
+                if self._should_be_guest(unknown_track, verified_track, current_time):
+                    self._activate_guest_mode(unknown_track, verified_track.identity, current_time)
+                    logger.info(f"👥 Guest mode activated: {verified_track.identity} + guest (track {unknown_track.track_id})")
+                    break
+
+    def _should_be_guest(self, unknown_track: PersonTrack, verified_track: PersonTrack, current_time: float) -> bool:
+        """Determine if an unknown person should be treated as a guest"""
+        # Check distance proximity
+        distance = self._calculate_distance(unknown_track.center, verified_track.center)
+        if distance > CCTV['guest_detection_distance']:
+            return False
+
+        # Check trajectory similarity (if both have enough trajectory points)
+        if (unknown_track.trajectory_history and verified_track.trajectory_history and
+            len(unknown_track.trajectory_history) >= 3 and len(verified_track.trajectory_history) >= 3):
+
+            similarity = self._calculate_trajectory_similarity(unknown_track.trajectory_history,
+                                                             verified_track.trajectory_history)
+            if similarity < CCTV['guest_trajectory_similarity']:
+                return False
+
+        # Additional checks: both should be moving in similar directions
+        # and have similar confidence levels (not one person and one object)
+        if abs(unknown_track.confidence - verified_track.confidence) > 0.3:
+            return False
+
+        return True
+
+    def _calculate_trajectory_similarity(self, traj1: deque, traj2: deque) -> float:
+        """Calculate similarity between two trajectories"""
+        if len(traj1) != len(traj2) or len(traj1) < 2:
+            return 0.0
+
+        # Calculate direction vectors for each trajectory
+        def get_direction_vector(traj):
+            if len(traj) < 2:
+                return (0, 0)
+
+            # Get the most recent movement (last 3 points for stability)
+            recent_points = list(traj)[-3:]
+            if len(recent_points) < 2:
+                return (0, 0)
+
+            # Calculate average direction vector
+            dx = sum(p2[0] - p1[0] for p1, p2 in zip(recent_points[:-1], recent_points[1:]))
+            dy = sum(p2[1] - p1[1] for p1, p2 in zip(recent_points[:-1], recent_points[1:]))
+            return (dx, dy)
+
+        vec1 = get_direction_vector(traj1)
+        vec2 = get_direction_vector(traj2)
+
+        # Calculate cosine similarity
+        dot_product = vec1[0] * vec2[0] + vec1[1] * vec2[1]
+        norm1 = math.sqrt(vec1[0]**2 + vec1[1]**2)
+        norm2 = math.sqrt(vec2[0]**2 + vec2[1]**2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return dot_product / (norm1 * norm2)
+
+    def _activate_guest_mode(self, guest_track: PersonTrack, host_name: str, current_time: float):
+        """Activate guest mode for a person"""
+        guest_track.is_guest = True
+        guest_track.guest_associated_with = host_name
+        guest_track.guest_mode_start_time = current_time
+
+        # Stop any recording that might have started
+        if guest_track.is_recording:
+            self._stop_recording(guest_track.track_id)
+            guest_track.is_recording = False
+
+        # Announce guest mode activation
+        if self.hardware_manager:
+            self.hardware_manager.activate_guest_mode(host_name)
+        elif self.sound_system and self.sound_system.voice_enabled:
+            message = f"Welcome back, {host_name}. {AUDIO['guest_mode_message']}"
+            self.sound_system._speak_text(message)
+
+        logger.info(f"👥 Guest mode activated for track {guest_track.track_id} with host {host_name}")
+
+    def _check_guest_mode_timeout(self, tracks: List[PersonTrack]):
+        """Check if guest mode should timeout and handle reversion"""
+        current_time = time.time()
+
+        # Check for guest mode timeout
+        guests_to_revert = []
+        for track in tracks:
+            if track.is_guest and (current_time - track.guest_mode_start_time > CCTV['guest_mode_duration']):
+                guests_to_revert.append(track)
+
+        # Revert guests who have timed out
+        for guest_track in guests_to_revert:
+            self._revert_guest_mode(guest_track, current_time)
+
+        # Check if we need to revert due to host leaving
+        self._check_host_departure(tracks, current_time)
+
+    def _revert_guest_mode(self, guest_track: PersonTrack, current_time: float):
+        """Revert a guest back to normal security monitoring"""
+        logger.info(f"⏰ Guest mode expired for track {guest_track.track_id} (associated with {guest_track.guest_associated_with})")
+
+        # Mark as no longer guest
+        guest_track.is_guest = False
+        guest_track.guest_associated_with = None
+        guest_track.guest_mode_start_time = 0.0
+
+        # Announce reversion
+        if self.hardware_manager:
+            self.hardware_manager.revert_guest_mode()
+        elif self.sound_system and self.sound_system.voice_enabled:
+            self.sound_system._speak_text(AUDIO['guest_mode_reverted'])
+
+        # If this guest is still unknown, start monitoring them normally
+        if not guest_track.is_known:
+            logger.info(f"👀 Now monitoring former guest (track {guest_track.track_id}) as potential unknown person")
+
+    def _check_host_departure(self, tracks: List[PersonTrack], current_time: float):
+        """Check if verified host has left and revert guests accordingly"""
+        # Get all current hosts (verified trusted persons)
+        current_hosts = set()
+        for track in tracks:
+            if track.is_trusted and track.is_known:
+                current_hosts.add(track.identity)
+
+        # Check each guest to see if their host is still present
+        guests_to_revert = []
+        for track in tracks:
+            if track.is_guest and track.guest_associated_with:
+                if track.guest_associated_with not in current_hosts:
+                    # Host has left, check if guest should be reverted
+                    time_since_host_left = current_time - track.last_seen
+                    if time_since_host_left > 10.0:  # Give 10 seconds grace period
+                        guests_to_revert.append(track)
+
+        # Revert guests whose hosts have left
+        for guest_track in guests_to_revert:
+            logger.info(f"🚶 Host {guest_track.guest_associated_with} has left - reverting guest (track {guest_track.track_id})")
+            self._revert_guest_mode(guest_track, current_time)
+
+    def _update_recordings(self, frame: np.ndarray, tracks: List[PersonTrack]):
+        """Update active recordings for unknown persons"""
+        current_time = time.time()
+
+        for track in tracks:
+            if track.is_recording:
+                # Check if recording should be stopped
+                recording_duration = current_time - track.recording_start_time
+                if recording_duration > CCTV['recording_duration']:
+                    self._stop_recording(track.track_id)
+                    track.is_recording = False
+                else:
+                    # Continue recording
+                    self._write_frame_to_recording(track.track_id, frame)
     
     def _is_face_good_quality(self, face_roi: np.ndarray) -> bool:
         """Check if face ROI has good enough quality for recognition"""
@@ -913,7 +1139,12 @@ class AdvancedPersonTracker:
         # Check if multiple people are present - if so, be more strict
         active_tracks = len([t for t in self.tracker.tracks.values() if current_time - t.last_seen < 2.0])
         multiple_people_present = active_tracks > 1
-        
+
+        # Handle guests - they don't need verification and shouldn't trigger alerts
+        if track.is_guest:
+            # Guests don't need face verification and shouldn't be treated as unknown
+            return
+
         # Check if this person is already trusted (known without needing face verification)
         if track.is_trusted and not self._needs_reverification(track, current_time):
             # If multiple people are present, require more frequent re-verification
@@ -983,19 +1214,40 @@ class AdvancedPersonTracker:
             track.verification_attempts = 0  # Reset failed attempts counter
             self.trusted_persons[identity] = current_time
             self.global_trusted_memory[identity] = current_time  # Update global memory
-            
-            # Clear any previous alerts and welcome back
+
+            # Clear any previous alerts
             track.siren_played = False  # Clear any previous unknown alerts
             track.alert_sent = False   # Reset alert state for proper welcome
-            
-            # Welcome back message for identification
-            if not track.alert_sent:
-                logger.info(f"👤 Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
-                if SECURITY.get('voice_alerts', False):
-                    self.sound_system.play_welcome_back(identity)
-                track.alert_sent = True
-                
+
+            # Stop recording if it was active
+            if track.is_recording:
+                self._stop_recording(track.track_id)
+
+            # Set status to ready (green LED)
+            if self.hardware_manager:
+                self.hardware_manager.set_system_status('ready')
+
+            # Check if this is the first person today for time-based greeting
+            current_time_dt = datetime.now()
+            today_start = datetime(current_time_dt.year, current_time_dt.month, current_time_dt.day).timestamp()
+
+            if current_time - track.last_greeting_time > 3600:  # Greet at most once per hour
+                # Use time-based greeting for first identification of the day
+                if track.last_greeting_time < today_start:
+                    self._greet_person(track, current_time)
+                else:
+                    # Welcome back for subsequent identifications
+                    self._welcome_back_person(track, current_time)
+
+                track.last_greeting_time = current_time
+
+            logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
+
         else:
+            # If already handled as unknown or alert sent, do not continue attempts
+            if (not track.is_known) or getattr(track, 'siren_played', False) or getattr(track, 'alert_sent', False):
+                return
+
             # TRIPLE VERIFICATION: Check cooldown before incrementing attempts
             time_since_last_attempt = current_time - track.last_verification_attempt
             
@@ -1010,6 +1262,9 @@ class AdvancedPersonTracker:
                     logger.warning(f"🚨 Person {track.track_id} failed {track.max_verification_attempts} verification attempts - marking as UNKNOWN")
                     track.is_known = False
                     track.is_trusted = False
+                    # Stop further verification attempts going forward
+                    track.verification_requested = False
+                    track.verification_attempts = track.max_verification_attempts
                     self._handle_unknown_person_verified(track, face_roi, current_time)
                 else:
                     # Still attempting verification - request face verification again
@@ -1063,37 +1318,67 @@ class AdvancedPersonTracker:
         return None
     
     def _handle_no_face_detected(self, track: PersonTrack, current_time: float):
-        """Handle when no face is detected for a person"""
+        """Handle when no face is detected for a person - enhanced for CCTV"""
         if track.needs_face_check and not track.verification_requested:
             # New person detected but no face visible - request verification
             track.verification_requested = True
             track.verification_start_time = current_time
-            
+
             logger.info(f"🔍 Person {track.track_id} detected - requesting face verification")
-            print(f"🔍 Unknown person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please verify your face")
-            
-            # Play verification request sound with voice
-            if SECURITY.get('voice_alerts', False):
+            print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face")
+
+            # Update hardware status
+            if self.hardware_manager:
+                self.hardware_manager.set_system_status('verifying')
+
+            # Play verification request
+            if self.hardware_manager:
+                self.hardware_manager.request_verification()
+            elif SECURITY.get('voice_alerts', False):
                 self.sound_system.play_verification_request()
-            
+
         elif track.verification_requested:
-            # Give periodic reminders during verification period
+            # Enhanced verification logic with different timeouts
             time_since_request = current_time - track.verification_start_time
-            verification_timeout = SECURITY.get('verification_timeout', 15.0)
-            
-            # Give voice reminder every 5 seconds
-            if int(time_since_request) % 5 == 0 and int(time_since_request) > 0:
-                if SECURITY.get('voice_alerts', False) and not hasattr(track, '_last_reminder') or current_time - getattr(track, '_last_reminder', 0) > 4.0:
+
+            # Use CCTV-specific timeout settings
+            verification_timeout = track.verification_timeout
+            unknown_timeout = track.unknown_timeout
+
+            # Give voice reminder every 4 seconds during first phase
+            if time_since_request < unknown_timeout and int(time_since_request) % 4 == 0 and int(time_since_request) > 0:
+                if (self.hardware_manager or SECURITY.get('voice_alerts', False)) and not hasattr(track, '_last_reminder') or current_time - getattr(track, '_last_reminder', 0) > 3.0:
                     track._last_reminder = current_time
-                    self.sound_system.play_verification_reminder()
-            
-            # Check if verification timeout has passed
+                    if self.hardware_manager:
+                        self.hardware_manager.request_verification()
+                    elif SECURITY.get('voice_alerts', False):
+                        self.sound_system.play_verification_reminder()
+
+            # Check if we've passed the "unknown" threshold (4 seconds)
+            if time_since_request > unknown_timeout and not track.siren_played:
+                # Mark as potential unknown person
+                logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
+                track.siren_played = True  # Prevent multiple alerts
+
+                # Start recording unknown person if enabled
+                if CCTV['recording_enabled']:
+                    self._start_recording(track)
+
+                # Play unknown alert
+                if self.hardware_manager:
+                    self.hardware_manager.play_alarm()
+
+                # Update status LED
+                if self.hardware_manager:
+                    self.hardware_manager.set_system_status('alert')
+
+            # Check if verification timeout has passed (8 seconds)
             if time_since_request > verification_timeout:
-                # Timeout - treat as unknown person
-                logger.warning(f"⏰ Person {track.track_id} verification timeout - treating as unknown")
+                # Full timeout - treat as unverified person
+                logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - treating as unverified")
                 self._handle_unknown_person_timeout(track, current_time)
     
-    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float):
+    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""
         if not track.siren_played:
             # Play siren and alert for unknown face
@@ -1101,15 +1386,25 @@ class AdvancedPersonTracker:
             print(f"\n🚨 ALERT! Unknown face detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 SECURITY BREACH - Unauthorized person identified!")
             
-            # Play siren and voice alert
+            # Play siren/voice via hardware manager on Pi; otherwise just log
             logger.info("🔊 Attempting to play unknown alert...")
-            self.sound_system.play_unknown_alert()
+            if self.hardware_manager:
+                self.hardware_manager.play_alarm()
+            else:
+                logger.info("🔇 No hardware manager available for alarm; skipping")
             
             # Save unknown face and full body
             if SECURITY['log_unknown_faces']:
                 self._save_unknown_face(face_roi, track.track_id)
                 # Also save full body photograph
-                self._save_unknown_person_full_body(frame, track)
+                try:
+                    frame_to_save = frame if frame is not None else getattr(self, '_last_frame', None)
+                    if frame_to_save is not None:
+                        self._save_unknown_person_full_body(frame_to_save, track)
+                    else:
+                        logger.warning("No frame available to save full body for unknown person")
+                except Exception as e:
+                    logger.error(f"Error saving unknown full body: {e}")
             
             track.siren_played = True
             track.alert_sent = True
@@ -1119,7 +1414,118 @@ class AdvancedPersonTracker:
         if not track.alert_sent:
             logger.warning(f"⏰ Person {track.track_id} didn't verify face - potential security concern")
             print(f"⚠️ Unverified person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Face verification required")
+
+            # Stop recording if it was started
+            if track.is_recording:
+                self._stop_recording(track.track_id)
+
             track.alert_sent = True
+
+    def _start_recording(self, track: PersonTrack):
+        """Start recording video of unknown person"""
+        if not CCTV['recording_enabled']:
+            return
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"recordings/unknown_person_{track.track_id}_{timestamp}.avi"
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            fps = CCTV['recording_fps']
+            resolution = CCTV['recording_resolution']
+
+            video_writer = cv2.VideoWriter(filename, fourcc, fps, resolution)
+            self.recording_active[track.track_id] = video_writer
+            track.is_recording = True
+            track.recording_start_time = time.time()
+
+            logger.info(f"📹 Started recording person {track.track_id} to {filename}")
+
+        except Exception as e:
+            logger.error(f"Failed to start recording: {e}")
+
+    def _stop_recording(self, track_id: int):
+        """Stop recording video of person"""
+        if track_id in self.recording_active:
+            try:
+                self.recording_active[track_id].release()
+                del self.recording_active[track_id]
+                logger.info(f"📹 Stopped recording person {track_id}")
+            except Exception as e:
+                logger.error(f"Failed to stop recording: {e}")
+
+    def _write_frame_to_recording(self, track_id: int, frame: np.ndarray):
+        """Write frame to active recording"""
+        if track_id in self.recording_active:
+            try:
+                # Resize frame to recording resolution if needed
+                if frame.shape[:2] != CCTV['recording_resolution']:
+                    frame_resized = cv2.resize(frame, CCTV['recording_resolution'])
+                else:
+                    frame_resized = frame
+
+                self.recording_active[track_id].write(frame_resized)
+            except Exception as e:
+                logger.error(f"Failed to write frame to recording: {e}")
+
+    def _get_time_based_greeting(self) -> str:
+        """Get appropriate greeting based on current time"""
+        current_hour = datetime.now().hour
+
+        if 5 <= current_hour < 12:
+            return AUDIO['greeting_morning']
+        elif 12 <= current_hour < 17:
+            return AUDIO['greeting_afternoon']
+        else:
+            return AUDIO['greeting_evening']
+
+    def _should_greet_person(self, track: PersonTrack, current_time: float) -> bool:
+        """Check if person should be greeted (avoid spam)"""
+        if not CCTV['greeting_enabled']:
+            return False
+
+        cooldown = CCTV['greeting_cooldown']
+        person_name = track.identity
+
+        if person_name not in self.greeting_history:
+            return True
+
+        return current_time - self.greeting_history[person_name] > cooldown
+
+    def _greet_person(self, track: PersonTrack, current_time: float):
+        """Greet a verified person with time-based message"""
+        if not self._should_greet_person(track, current_time):
+            return
+
+        person_name = track.identity
+        self.greeting_history[person_name] = current_time
+
+        greeting = self._get_time_based_greeting()
+        logger.info(f"👋 Greeting {person_name}: {greeting}")
+
+        # Use hardware manager for greeting if available
+        if self.hardware_manager:
+            self.hardware_manager.greet_person(person_name)
+        else:
+            # Fallback to text output
+            print(f"{greeting}, {person_name}!")
+
+    def _welcome_back_person(self, track: PersonTrack, current_time: float):
+        """Welcome back a recognized person"""
+        if not self._should_greet_person(track, current_time):
+            return
+
+        person_name = track.identity
+
+        # Mark as greeted to avoid immediate re-greeting
+        self.greeting_history[person_name] = current_time
+
+        logger.info(f"🎉 Welcoming back {person_name}")
+
+        # Use hardware manager for welcome message if available
+        if self.hardware_manager:
+            self.hardware_manager.welcome_back(person_name)
+        else:
+            print(f"{AUDIO['welcome_back']}, {person_name}!")
     
     def _needs_reverification(self, track: PersonTrack, current_time: float) -> bool:
         """Check if trusted person needs re-verification"""
@@ -1244,7 +1650,13 @@ class AdvancedPersonTracker:
             track_age = current_time - track.last_seen
             
             # Choose color and status based on verification state
-            if track.is_trusted and track.is_known:
+            if track.is_guest:
+                # Guest mode - show guest status
+                color = (255, 255, 0)  # Yellow
+                host_name = track.guest_associated_with or "Unknown"
+                time_remaining = max(0, CCTV['guest_mode_duration'] - (current_time - track.guest_mode_start_time))
+                status = f"GUEST (with {host_name[:10]}...) ({time_remaining:.0f}s)"
+            elif track.is_trusted and track.is_known:
                 # Trusted known person
                 color = (0, 255, 0)  # Green
                 status = f"TRUSTED: {track.identity}"
@@ -1332,9 +1744,15 @@ class AdvancedPersonTracker:
         trusted_count = sum(1 for t in tracks if t.is_trusted)
         verification_count = sum(1 for t in tracks if t.verification_requested)
         unknown_count = sum(1 for t in tracks if not t.is_known and not t.verification_requested)
-        
-        info_text = f"Trusted: {trusted_count} | Verifying: {verification_count} | Unknown: {unknown_count}"
+        guest_count = sum(1 for t in tracks if t.is_guest)
+
+        info_text = f"Trusted: {trusted_count} | Verifying: {verification_count} | Unknown: {unknown_count} | Guests: {guest_count}"
         cv2.putText(annotated, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # Draw guest mode indicator
+        if guest_count > 0:
+            guest_mode_text = "👥 GUEST MODE ACTIVE"
+            cv2.putText(annotated, guest_mode_text, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
         
         # Draw verification instructions
         if verification_count > 0:

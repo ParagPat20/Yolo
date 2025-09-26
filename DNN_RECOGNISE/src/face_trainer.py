@@ -44,34 +44,36 @@ def preprocess_face_for_training(face_img):
 
 def create_arcface_embeddings():
     """
-    Create ArcFace embeddings from training images
+    Create ArcFace embeddings from training images with enhanced processing
     """
     try:
         import pickle
-        
-        logger.info("🧠 Creating ArcFace embeddings...")
-        
+        import os
+        from pathlib import Path
+
+        logger.info("🧠 Creating ArcFace embeddings with enhanced processing...")
+
         # Try to import ArcFace recognizer from advanced tracker
         try:
             from advanced_person_tracker import ArcFaceRecognizer
             recognizer = ArcFaceRecognizer()
-            
+
             if recognizer.net is None:
                 logger.warning("ArcFace model not available, skipping embedding creation")
                 return False
-            
+
         except ImportError:
             logger.warning("Advanced tracker not available, skipping ArcFace embeddings")
             return False
         
-        # Process ArcFace format images
+        # Process ArcFace format images with enhanced organization
         arcface_dir = os.path.join(PATHS['image_dir'], 'arcface_format')
         if not os.path.exists(arcface_dir):
             logger.warning("No ArcFace format images found")
             return False
-        
+
         embeddings = {}
-        
+
         # Load names mapping
         names_path = PATHS['names_file']
         names_mapping = {}
@@ -83,65 +85,135 @@ def create_arcface_embeddings():
                         names_mapping = json.loads(content)
             except Exception as e:
                 logger.error(f"Failed to load names: {e}")
-        
-        # Process each person directory
+
+        # Process each person directory with enhanced validation
         for person_dir in os.listdir(arcface_dir):
             person_path = os.path.join(arcface_dir, person_dir)
             if not os.path.isdir(person_path):
                 continue
-            
-            # Extract person ID from directory name
+
+            # Extract person ID from directory name with better parsing
             try:
-                person_id = int(person_dir.split('_')[1])
-                person_name = names_mapping.get(str(person_id), f"Person_{person_id}")
-            except (IndexError, ValueError):
-                logger.warning(f"Invalid person directory: {person_dir}")
+                if person_dir.startswith('person_'):
+                    person_id = int(person_dir.split('_')[1])
+                    person_name = names_mapping.get(str(person_id), f"Person_{person_id}")
+                else:
+                    logger.warning(f"Skipping non-standard person directory: {person_dir}")
+                    continue
+            except (IndexError, ValueError) as e:
+                logger.warning(f"Invalid person directory format: {person_dir} - {e}")
                 continue
-            
-            # Process images for this person
+
+            # Process images for this person with quality filtering
             person_embeddings = []
             image_files = [f for f in os.listdir(person_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-            
+
+            logger.info(f"Processing {len(image_files)} images for {person_name}")
+
             for image_file in image_files:
                 image_path = os.path.join(person_path, image_file)
                 try:
-                    # Load and process image
+                    # Load and preprocess image
                     image = cv2.imread(image_path)
                     if image is None:
+                        logger.warning(f"Failed to load image: {image_path}")
                         continue
-                    
+
+                    # Basic image validation
+                    if image.size == 0:
+                        logger.warning(f"Empty image: {image_path}")
+                        continue
+
                     # Extract embedding
                     embedding = recognizer.extract_embedding(image)
-                    if embedding is not None:
+                    if embedding is not None and len(embedding) > 0:
                         person_embeddings.append(embedding)
-                        
+                        logger.debug(f"✓ Processed {image_file}")
+                    else:
+                        logger.warning(f"Failed to extract embedding from {image_file}")
+
                 except Exception as e:
-                    logger.warning(f"Failed to process {image_path}: {e}")
-            
-            # Average embeddings for this person
+                    logger.warning(f"Error processing {image_path}: {e}")
+
+            # Enhanced embedding processing
             if person_embeddings:
-                avg_embedding = np.mean(person_embeddings, axis=0)
-                # Normalize
-                avg_embedding = avg_embedding / np.linalg.norm(avg_embedding)
-                embeddings[person_name] = avg_embedding
-                logger.info(f"Created embedding for {person_name} from {len(person_embeddings)} images")
-        
-        # Save embeddings
+                # Convert to numpy array
+                embeddings_array = np.array(person_embeddings)
+
+                # Remove outliers (embeddings too different from mean)
+                if len(embeddings_array) > 3:
+                    mean_embedding = np.mean(embeddings_array, axis=0)
+                    distances = np.linalg.norm(embeddings_array - mean_embedding, axis=1)
+                    threshold = np.percentile(distances, 75)  # Remove top 25% outliers
+                    valid_indices = distances <= threshold
+                    embeddings_array = embeddings_array[valid_indices]
+
+                # Average embeddings for this person
+                if len(embeddings_array) > 0:
+                    avg_embedding = np.mean(embeddings_array, axis=0)
+                    # Normalize
+                    norm = np.linalg.norm(avg_embedding)
+                    if norm > 0:
+                        avg_embedding = avg_embedding / norm
+                        embeddings[person_name] = avg_embedding
+                        logger.info(f"✅ Created embedding for {person_name} from {len(embeddings_array)} valid images")
+                    else:
+                        logger.warning(f"Zero norm embedding for {person_name}")
+                else:
+                    logger.warning(f"No valid embeddings for {person_name}")
+            else:
+                logger.warning(f"No embeddings could be extracted for {person_name}")
+
+        # Save embeddings with backup
         if embeddings:
             embeddings_path = PATHS.get('face_embeddings', 'models/face_embeddings.pkl')
+            backup_path = f"{embeddings_path}.backup"
+
+            # Create backup if exists
+            if os.path.exists(embeddings_path):
+                try:
+                    import shutil
+                    shutil.copy2(embeddings_path, backup_path)
+                    logger.info(f"📦 Created backup of existing embeddings")
+                except Exception as e:
+                    logger.warning(f"Failed to create backup: {e}")
+
+            # Save new embeddings
             os.makedirs(os.path.dirname(embeddings_path), exist_ok=True)
-            
-            with open(embeddings_path, 'wb') as f:
-                pickle.dump(embeddings, f)
-            
-            logger.info(f"✅ Saved {len(embeddings)} ArcFace embeddings to {embeddings_path}")
-            return True
+
+            try:
+                with open(embeddings_path, 'wb') as f:
+                    pickle.dump(embeddings, f)
+
+                logger.info(f"💾 Saved {len(embeddings)} ArcFace embeddings to {embeddings_path}")
+
+                # Validate saved embeddings
+                with open(embeddings_path, 'rb') as f:
+                    loaded_embeddings = pickle.load(f)
+
+                if len(loaded_embeddings) == len(embeddings):
+                    logger.info("✅ Embeddings saved and validated successfully")
+                    return True
+                else:
+                    logger.error("❌ Embeddings validation failed - size mismatch")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Failed to save embeddings: {e}")
+                # Restore backup if available
+                if os.path.exists(backup_path):
+                    try:
+                        shutil.copy2(backup_path, embeddings_path)
+                        logger.info("🔄 Restored backup embeddings")
+                    except Exception as restore_e:
+                        logger.error(f"Failed to restore backup: {restore_e}")
+                return False
         else:
-            logger.warning("No embeddings created")
+            logger.warning("⚠️ No embeddings created - check training data quality")
             return False
-            
+
     except Exception as e:
-        logger.error(f"Failed to create ArcFace embeddings: {e}")
+        logger.error(f"❌ Failed to create ArcFace embeddings: {e}")
         return False
 
 def get_images_and_labels(path: str):

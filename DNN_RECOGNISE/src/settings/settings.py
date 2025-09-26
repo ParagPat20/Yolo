@@ -108,6 +108,72 @@ SECURITY = {
     'trusted_person_memory': 600.0,  # Seconds to remember trusted person without face (10 minutes)
 }
 
+# CCTV Hardware Configuration
+HARDWARE = {
+    'pir_pin': 17,  # GPIO pin for PIR motion sensor
+    'led_brightness_pin': 18,  # GPIO pin for high brightness LED
+    'led_green_pin': 22,  # GPIO pin for green status LED
+    'led_yellow_pin': 23,  # GPIO pin for yellow status LED
+    'led_red_pin': 24,  # GPIO pin for red status LED
+    'bt_speaker_mac': 'XX:XX:XX:XX:XX:XX',  # Bluetooth speaker MAC address
+    'bt_speaker_name': 'CCTV_Speaker',  # Bluetooth speaker name
+    # If your Raspberry Pi is already paired and default audio is set,
+    # skip connection attempts and play via system audio (ALSA/PulseAudio)
+    'bt_skip_connect': True,
+    'bt_use_system_audio': True,
+}
+
+# CCTV System Settings
+CCTV = {
+    'motion_detection_enabled': True,  # Enable PIR-based motion detection
+    'motion_cooldown': 5.0,  # Seconds between motion detections
+    'led_auto_brightness': True,  # Auto-control high brightness LED
+    'led_brightness_duration': 30.0,  # How long to keep LED on after motion
+    'recording_enabled': True,  # Enable video recording for unknown persons
+    'recording_duration': 60.0,  # How long to record unknown persons (seconds)
+    'recording_fps': 30,  # Recording frame rate
+    'recording_resolution': (1280, 720),  # Recording resolution
+    'greeting_enabled': True,  # Enable time-based greetings
+    'greeting_cooldown': 300.0,  # Seconds between greetings for same person
+    'verification_timeout': 8.0,  # Time to wait for face verification (seconds)
+    'unknown_timeout': 4.0,  # Time before marking as unknown person (seconds)
+    'max_verification_attempts': 3,  # Maximum verification attempts
+    'verification_cooldown': 2.0,  # Cooldown between verification attempts
+    # Guest Mode Settings
+    'guest_mode_enabled': True,  # Enable context-aware guest mode
+    'guest_mode_duration': 900.0,  # Guest mode duration in seconds (15 minutes)
+    'guest_detection_distance': 200.0,  # Maximum distance for guest association (pixels)
+    'guest_trajectory_similarity': 0.7,  # Minimum trajectory similarity for guest detection
+    'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
+}
+
+# Audio Settings
+AUDIO = {
+    'greeting_morning': 'Good morning',
+    'greeting_afternoon': 'Good afternoon',
+    'greeting_evening': 'Good evening',
+    'unknown_alert': 'Alert! Unknown person detected in the area',
+    'verification_request': 'Please look at the camera for verification',
+    'welcome_back': 'Welcome back',
+    'guest_mode_message': "I've noticed you have a guest. System is now in guest mode for the next 15 minutes",
+    'guest_mode_reverted': 'Guest mode expired. Reverting to normal security protocols',
+    'alarm_sound_file': 'sounds/alarm.mp3',  # Alarm sound file path
+    'greeting_sound_enabled': True,  # Play sound with greetings
+    'alert_sound_enabled': True,  # Play sound with alerts
+}
+
+# Voice Settings for Text-to-Speech (Female Voice)
+VOICE = {
+    'engine': 'espeak-ng',  # Options: 'espeak-ng', 'festival', 'auto'
+    'gender': 'female',  # Options: 'female', 'male'
+    'espeak_voice': 'en+f3',  # espeak-ng female voice (en+f1, en+f2, en+f3, en+f4)
+    'festival_voice': 'cmu_us_slt_cg',  # Festival female voice
+    'speech_rate': 100,  # Speech rate (words per minute)
+    'pitch': 30,  # Pitch adjustment (0-100, 50 = natural female)
+    'volume': 80,  # Volume (0-100)
+    'language': 'en',  # Language code
+}
+
 # Legacy compatibility settings
 CONFIDENCE_THRESHOLD = 35  # For LBPH compatibility
 OBJECT_DETECTION = {
