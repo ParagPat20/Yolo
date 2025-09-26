@@ -21,6 +21,9 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from collections import defaultdict, deque
+import platform
+import shutil
+import subprocess
 
 from settings.settings import (
     CAMERA, PERSON_DETECTION, FACE_DETECTION, FACE_RECOGNITION,
@@ -53,7 +56,6 @@ except ImportError:
 # Try to import sound libraries
 try:
     import winsound
-    import subprocess
     SOUND_AVAILABLE = True
     logger.info("🔊 Windows sound support available")
 except ImportError:
@@ -75,6 +77,19 @@ except ImportError:
     except:
         VOICE_AVAILABLE = False
         logger.warning("🔇 Voice support not available")
+
+# Raspberry Pi / Linux voice support (placed just after Windows lines for easy identification)
+try:
+    if platform.system() == 'Linux' and shutil.which('espeak-ng') is not None:
+        # Enable generic sound/voice via espeak-ng (Bluetooth speaker assumed already paired)
+        SOUND_AVAILABLE = True if SOUND_AVAILABLE is False else SOUND_AVAILABLE
+        VOICE_AVAILABLE = True
+        RPI_SPEECH_AVAILABLE = True
+        logger.info("🗣️ Linux/Raspberry Pi speech available via espeak-ng")
+    else:
+        RPI_SPEECH_AVAILABLE = False
+except Exception as _e:
+    RPI_SPEECH_AVAILABLE = False
 
 @dataclass
 class PersonTrack:
@@ -712,10 +727,14 @@ class WindowsSoundAlertSystem:
     """Windows-native sound and voice alert system with threading"""
     
     def __init__(self):
-        self.sound_enabled = SECURITY.get('alert_sound', False) and SOUND_AVAILABLE
-        self.voice_enabled = SECURITY.get('voice_alerts', False) and VOICE_AVAILABLE
+        self.sound_enabled = SECURITY.get('alert_sound', False) and (SOUND_AVAILABLE or 'Linux' in platform.system())
+        self.voice_enabled = SECURITY.get('voice_alerts', False) and (VOICE_AVAILABLE or ('Linux' in platform.system() and 'RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE))
         self.last_voice_time = 0.0  # Cooldown for voice alerts
         self.use_win32_speech = False
+        self.use_espeak_ng = bool('Linux' in platform.system() and 'RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE)
+        self.play_token = 0  # Invalidate older sounds when a new one starts
+        self.current_process = None  # Track active subprocess for TTS/siren
+        self.thread_lock = threading.Lock()
         
         # Threading control
         self.sound_threads = []  # Keep track of active sound threads
@@ -723,7 +742,7 @@ class WindowsSoundAlertSystem:
         self._cleanup_threads()  # Clean up any old threads
         
         # Initialize Windows Speech API
-        if self.voice_enabled:
+        if self.voice_enabled and not self.use_espeak_ng:
             try:
                 import win32com.client
                 self.speech_engine = win32com.client.Dispatch("SAPI.SpVoice")
@@ -732,6 +751,8 @@ class WindowsSoundAlertSystem:
             except Exception as e:
                 logger.info(f"Windows Speech API not available, using PowerShell: {e}")
                 self.use_win32_speech = False
+        elif self.voice_enabled and self.use_espeak_ng:
+            logger.info("🗣️ espeak-ng will be used for voice output on Linux/Raspberry Pi")
         
         if self.sound_enabled:
             logger.info("🔊 Windows sound system ready")
@@ -741,47 +762,116 @@ class WindowsSoundAlertSystem:
         self.sound_threads = [t for t in self.sound_threads if t.is_alive()]
     
     def _start_sound_thread(self, target_func, *args, **kwargs):
-        """Start a sound operation in a separate thread"""
+        """Start a sound operation in a separate thread; cancel previous and play latest only"""
         self._cleanup_threads()
-        
-        # Limit concurrent sounds to prevent system overload
-        if len(self.sound_threads) >= self.max_concurrent_sounds:
-            logger.warning(f"🔊 Too many concurrent sounds ({len(self.sound_threads)}), skipping")
-            return
-        
-        thread = threading.Thread(target=target_func, args=args, kwargs=kwargs, daemon=True)
+
+        # Always cancel previous audio before starting a new one (latest wins)
+        self.stop_all_sounds()
+
+        # Invalidate older tasks and create a new token
+        with self.thread_lock:
+            self.play_token += 1
+            current_token = self.play_token
+
+        def run_with_token():
+            try:
+                target_func(current_token, *args, **kwargs)
+            except Exception as e:
+                logger.error(f"Sound thread error: {e}")
+
+        thread = threading.Thread(target=run_with_token, daemon=True)
         thread.start()
         self.sound_threads.append(thread)
         logger.debug(f"🔊 Started sound thread, active threads: {len(self.sound_threads)}")
+
+    def _spawn_process(self, args: List[str], token: int):
+        """Spawn a subprocess for audio and allow cancellation by token."""
+        try:
+            with self.thread_lock:
+                # If a new token has been issued, abort
+                if token != self.play_token:
+                    return
+                # Terminate any existing process first (defensive)
+                if self.current_process and self.current_process.poll() is None:
+                    try:
+                        self.current_process.terminate()
+                    except Exception:
+                        pass
+                self.current_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc = self.current_process
+
+            # Wait for completion, but break early if superseded
+            while True:
+                if proc.poll() is not None:
+                    break
+                with self.thread_lock:
+                    if token != self.play_token:
+                        # Superseded; terminate
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        break
+                time.sleep(0.05)
+        finally:
+            with self.thread_lock:
+                if self.current_process and self.current_process.poll() is not None:
+                    self.current_process = None
     
-    def _play_windows_beep(self):
+    def _play_windows_beep(self, token: int):
         """Play Windows system beep"""
         try:
-            winsound.Beep(800, 200)  # 800Hz for 200ms
+            if self.use_espeak_ng:
+                # Quick audible ping via espeak-ng
+                self._spawn_process(['espeak-ng', '-a', '200', '-s', '300', 'beep'], token)
+            else:
+                winsound.Beep(800, 200)  # 800Hz for 200ms
         except Exception as e:
             logger.error(f"Failed to play beep: {e}")
     
-    def _play_windows_siren(self):
+    def _play_windows_siren(self, token: int):
         """Play siren using Windows sounds"""
         try:
-            # Play multiple beeps to simulate siren
-            for i in range(6):  # 3 seconds worth
-                freq = 800 if i % 2 == 0 else 1200
-                winsound.Beep(freq, 250)  # 250ms each
+            if self.use_espeak_ng:
+                # Speak alert repeatedly to simulate siren on Raspberry Pi
+                for _ in range(6):
+                    with self.thread_lock:
+                        if token != self.play_token:
+                            return
+                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '240', 'Alert!'], token)
+            else:
+                # Play multiple beeps to simulate siren
+                for i in range(6):  # 3 seconds worth
+                    with self.thread_lock:
+                        if token != self.play_token:
+                            return
+                    freq = 800 if i % 2 == 0 else 1200
+                    winsound.Beep(freq, 250)  # 250ms each
         except Exception as e:
             logger.error(f"Failed to play siren: {e}")
     
-    def _speak_text(self, text: str):
+    def _speak_text(self, token: int, text: str):
         """Speak text using Windows TTS"""
         try:
-            if self.use_win32_speech:
+            if self.use_espeak_ng:
+                self._spawn_process(['espeak-ng', text], token)
+            elif self.use_win32_speech:
                 # Use Windows Speech API
+                # Purge any queued speech so latest wins
+                try:
+                    # 1 = SVSFPurgeBeforeSpeak
+                    self.speech_engine.Speak("", 1)
+                except Exception:
+                    pass
                 self.speech_engine.Speak(text)
             else:
                 # Use PowerShell as fallback
-                ps_command = f'Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak("{text}")'
-                subprocess.run(['powershell', '-Command', ps_command], 
-                             capture_output=True, timeout=10)
+                ps_command = (
+                    "Add-Type -AssemblyName System.Speech; "
+                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                    f"$s.Speak(\"{text}\");"
+                )
+                self._spawn_process(['powershell', '-Command', ps_command], token)
         except Exception as e:
             logger.error(f"Failed to speak text: {e}")
     
@@ -826,21 +916,17 @@ class WindowsSoundAlertSystem:
         """Play siren and voice alert for unknown person"""
         logger.info("🔊 play_unknown_alert called")
         
-        if self.sound_enabled:
-            logger.info("🚨 Playing Windows siren...")
-            self._start_sound_thread(self._play_windows_siren)
-        else:
-            logger.info("🔇 Sound is disabled")
-        
-        # Critical alert - bypass cooldown
+        # Latest wins: choose voice alert as the most informative
         if self.voice_enabled:
-            logger.info("🗣️ Attempting to play voice alert...")
+            logger.info("🗣️ Playing voice alert for unknown person...")
             message = "Alert! Unknown face detected!"
             self._start_sound_thread(self._speak_text, message)
             self.last_voice_time = time.time()
-            logger.info("✅ Voice alert started in background")
+        elif self.sound_enabled:
+            logger.info("🚨 Playing siren...")
+            self._start_sound_thread(self._play_windows_siren)
         else:
-            logger.info("🔇 Voice is disabled")
+            logger.info("🔇 Audio is disabled")
     
     def play_welcome_back(self, name: str):
         """Play welcome message for known person"""
@@ -850,11 +936,24 @@ class WindowsSoundAlertSystem:
     
     def stop_all_sounds(self):
         """Stop all playing sounds and clean up threads"""
+        # Invalidate any running sound threads
+        with self.thread_lock:
+            self.play_token += 1
+
         if self.use_win32_speech and self.voice_enabled:
             try:
                 self.speech_engine.Speak("", 1)  # Stop current speech
             except Exception as e:
                 logger.error(f"Failed to stop speech: {e}")
+        
+        # Terminate any running subprocess (espeak-ng or PowerShell)
+        with self.thread_lock:
+            if self.current_process and self.current_process.poll() is None:
+                try:
+                    self.current_process.terminate()
+                except Exception:
+                    pass
+                self.current_process = None
         
         # Clean up finished threads
         self._cleanup_threads()
