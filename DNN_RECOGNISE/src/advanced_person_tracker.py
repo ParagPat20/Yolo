@@ -112,6 +112,12 @@ class PersonTrack:
     recording_start_time: float = 0.0  # When recording started
     last_greeting_time: float = 0.0  # Last time this person was greeted
 
+    # Guest Mode fields
+    is_guest: bool = False  # Whether this person is a guest
+    guest_associated_with: Optional[str] = None  # Name of the verified person they're associated with
+    guest_mode_start_time: float = 0.0  # When guest mode started for this person
+    trajectory_history: deque = None  # Store recent trajectory points for guest detection
+
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
     
@@ -632,6 +638,10 @@ class ByteTracker:
                     track.confidence = detection['confidence']
                     track.last_seen = current_time
                     track.frames_since_recognition += 1
+
+                    # Update trajectory history for guest detection
+                    if track.trajectory_history is not None:
+                        track.trajectory_history.append(smoothed_center)
                     
                     matched_tracks.append(track_id)
                     unmatched_detections.remove(best_detection_idx)
@@ -650,7 +660,10 @@ class ByteTracker:
                     last_seen=current_time,
                     frames_since_recognition=0
                 )
-                
+
+                # Initialize trajectory history for guest detection
+                new_track.trajectory_history = deque(maxlen=10)  # Store last 10 trajectory points
+
                 # Check if there's a recently trusted person via parent tracker
                 if self.parent_tracker:
                     recently_trusted = self.parent_tracker._check_recently_trusted_for_new_track(current_time)
@@ -896,16 +909,182 @@ class AdvancedPersonTracker:
         for track in person_tracks:
             self._process_person_track(frame, track)
 
+        # Check for guest mode activation
+        if CCTV['guest_mode_enabled']:
+            self._check_and_activate_guest_mode(person_tracks)
+
         # Handle active recordings
         self._update_recordings(frame, person_tracks)
 
         # Clean up old trusted memory entries
         self._cleanup_trusted_memory()
 
+        # Check for guest mode timeout and reversion
+        if CCTV['guest_mode_enabled']:
+            self._check_guest_mode_timeout(person_tracks)
+
         # Draw annotations
         annotated_frame = self._draw_annotations(frame, person_tracks)
 
         return annotated_frame, person_tracks
+
+    def _check_and_activate_guest_mode(self, tracks: List[PersonTrack]):
+        """Check if guest mode should be activated based on person context"""
+        current_time = time.time()
+
+        # Find verified and unknown persons
+        verified_persons = []
+        unknown_persons = []
+
+        for track in tracks:
+            if track.is_trusted and track.is_known:
+                verified_persons.append(track)
+            elif not track.is_known and not track.is_guest and not track.verification_requested:
+                # Only consider persons who are fully unknown (not in verification process)
+                unknown_persons.append(track)
+
+        # Check each unknown person to see if they're with a verified person
+        for unknown_track in unknown_persons:
+            for verified_track in verified_persons:
+                if self._should_be_guest(unknown_track, verified_track, current_time):
+                    self._activate_guest_mode(unknown_track, verified_track.identity, current_time)
+                    logger.info(f"👥 Guest mode activated: {verified_track.identity} + guest (track {unknown_track.track_id})")
+                    break
+
+    def _should_be_guest(self, unknown_track: PersonTrack, verified_track: PersonTrack, current_time: float) -> bool:
+        """Determine if an unknown person should be treated as a guest"""
+        # Check distance proximity
+        distance = self._calculate_distance(unknown_track.center, verified_track.center)
+        if distance > CCTV['guest_detection_distance']:
+            return False
+
+        # Check trajectory similarity (if both have enough trajectory points)
+        if (unknown_track.trajectory_history and verified_track.trajectory_history and
+            len(unknown_track.trajectory_history) >= 3 and len(verified_track.trajectory_history) >= 3):
+
+            similarity = self._calculate_trajectory_similarity(unknown_track.trajectory_history,
+                                                             verified_track.trajectory_history)
+            if similarity < CCTV['guest_trajectory_similarity']:
+                return False
+
+        # Additional checks: both should be moving in similar directions
+        # and have similar confidence levels (not one person and one object)
+        if abs(unknown_track.confidence - verified_track.confidence) > 0.3:
+            return False
+
+        return True
+
+    def _calculate_trajectory_similarity(self, traj1: deque, traj2: deque) -> float:
+        """Calculate similarity between two trajectories"""
+        if len(traj1) != len(traj2) or len(traj1) < 2:
+            return 0.0
+
+        # Calculate direction vectors for each trajectory
+        def get_direction_vector(traj):
+            if len(traj) < 2:
+                return (0, 0)
+
+            # Get the most recent movement (last 3 points for stability)
+            recent_points = list(traj)[-3:]
+            if len(recent_points) < 2:
+                return (0, 0)
+
+            # Calculate average direction vector
+            dx = sum(p2[0] - p1[0] for p1, p2 in zip(recent_points[:-1], recent_points[1:]))
+            dy = sum(p2[1] - p1[1] for p1, p2 in zip(recent_points[:-1], recent_points[1:]))
+            return (dx, dy)
+
+        vec1 = get_direction_vector(traj1)
+        vec2 = get_direction_vector(traj2)
+
+        # Calculate cosine similarity
+        dot_product = vec1[0] * vec2[0] + vec1[1] * vec2[1]
+        norm1 = math.sqrt(vec1[0]**2 + vec1[1]**2)
+        norm2 = math.sqrt(vec2[0]**2 + vec2[1]**2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return dot_product / (norm1 * norm2)
+
+    def _activate_guest_mode(self, guest_track: PersonTrack, host_name: str, current_time: float):
+        """Activate guest mode for a person"""
+        guest_track.is_guest = True
+        guest_track.guest_associated_with = host_name
+        guest_track.guest_mode_start_time = current_time
+
+        # Stop any recording that might have started
+        if guest_track.is_recording:
+            self._stop_recording(guest_track.track_id)
+            guest_track.is_recording = False
+
+        # Announce guest mode activation
+        if self.hardware_manager:
+            self.hardware_manager.activate_guest_mode(host_name)
+        elif self.sound_system and self.sound_system.voice_enabled:
+            message = f"Welcome back, {host_name}. {AUDIO['guest_mode_message']}"
+            self.sound_system._speak_text(message)
+
+        logger.info(f"👥 Guest mode activated for track {guest_track.track_id} with host {host_name}")
+
+    def _check_guest_mode_timeout(self, tracks: List[PersonTrack]):
+        """Check if guest mode should timeout and handle reversion"""
+        current_time = time.time()
+
+        # Check for guest mode timeout
+        guests_to_revert = []
+        for track in tracks:
+            if track.is_guest and (current_time - track.guest_mode_start_time > CCTV['guest_mode_duration']):
+                guests_to_revert.append(track)
+
+        # Revert guests who have timed out
+        for guest_track in guests_to_revert:
+            self._revert_guest_mode(guest_track, current_time)
+
+        # Check if we need to revert due to host leaving
+        self._check_host_departure(tracks, current_time)
+
+    def _revert_guest_mode(self, guest_track: PersonTrack, current_time: float):
+        """Revert a guest back to normal security monitoring"""
+        logger.info(f"⏰ Guest mode expired for track {guest_track.track_id} (associated with {guest_track.guest_associated_with})")
+
+        # Mark as no longer guest
+        guest_track.is_guest = False
+        guest_track.guest_associated_with = None
+        guest_track.guest_mode_start_time = 0.0
+
+        # Announce reversion
+        if self.hardware_manager:
+            self.hardware_manager.revert_guest_mode()
+        elif self.sound_system and self.sound_system.voice_enabled:
+            self.sound_system._speak_text(AUDIO['guest_mode_reverted'])
+
+        # If this guest is still unknown, start monitoring them normally
+        if not guest_track.is_known:
+            logger.info(f"👀 Now monitoring former guest (track {guest_track.track_id}) as potential unknown person")
+
+    def _check_host_departure(self, tracks: List[PersonTrack], current_time: float):
+        """Check if verified host has left and revert guests accordingly"""
+        # Get all current hosts (verified trusted persons)
+        current_hosts = set()
+        for track in tracks:
+            if track.is_trusted and track.is_known:
+                current_hosts.add(track.identity)
+
+        # Check each guest to see if their host is still present
+        guests_to_revert = []
+        for track in tracks:
+            if track.is_guest and track.guest_associated_with:
+                if track.guest_associated_with not in current_hosts:
+                    # Host has left, check if guest should be reverted
+                    time_since_host_left = current_time - track.last_seen
+                    if time_since_host_left > 10.0:  # Give 10 seconds grace period
+                        guests_to_revert.append(track)
+
+        # Revert guests whose hosts have left
+        for guest_track in guests_to_revert:
+            logger.info(f"🚶 Host {guest_track.guest_associated_with} has left - reverting guest (track {guest_track.track_id})")
+            self._revert_guest_mode(guest_track, current_time)
 
     def _update_recordings(self, frame: np.ndarray, tracks: List[PersonTrack]):
         """Update active recordings for unknown persons"""
@@ -958,7 +1137,12 @@ class AdvancedPersonTracker:
         # Check if multiple people are present - if so, be more strict
         active_tracks = len([t for t in self.tracker.tracks.values() if current_time - t.last_seen < 2.0])
         multiple_people_present = active_tracks > 1
-        
+
+        # Handle guests - they don't need verification and shouldn't trigger alerts
+        if track.is_guest:
+            # Guests don't need face verification and shouldn't be treated as unknown
+            return
+
         # Check if this person is already trusted (known without needing face verification)
         if track.is_trusted and not self._needs_reverification(track, current_time):
             # If multiple people are present, require more frequent re-verification
@@ -1447,7 +1631,13 @@ class AdvancedPersonTracker:
             track_age = current_time - track.last_seen
             
             # Choose color and status based on verification state
-            if track.is_trusted and track.is_known:
+            if track.is_guest:
+                # Guest mode - show guest status
+                color = (255, 255, 0)  # Yellow
+                host_name = track.guest_associated_with or "Unknown"
+                time_remaining = max(0, CCTV['guest_mode_duration'] - (current_time - track.guest_mode_start_time))
+                status = f"GUEST (with {host_name[:10]}...) ({time_remaining:.0f}s)"
+            elif track.is_trusted and track.is_known:
                 # Trusted known person
                 color = (0, 255, 0)  # Green
                 status = f"TRUSTED: {track.identity}"
@@ -1535,9 +1725,15 @@ class AdvancedPersonTracker:
         trusted_count = sum(1 for t in tracks if t.is_trusted)
         verification_count = sum(1 for t in tracks if t.verification_requested)
         unknown_count = sum(1 for t in tracks if not t.is_known and not t.verification_requested)
-        
-        info_text = f"Trusted: {trusted_count} | Verifying: {verification_count} | Unknown: {unknown_count}"
+        guest_count = sum(1 for t in tracks if t.is_guest)
+
+        info_text = f"Trusted: {trusted_count} | Verifying: {verification_count} | Unknown: {unknown_count} | Guests: {guest_count}"
         cv2.putText(annotated, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # Draw guest mode indicator
+        if guest_count > 0:
+            guest_mode_text = "👥 GUEST MODE ACTIVE"
+            cv2.putText(annotated, guest_mode_text, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
         
         # Draw verification instructions
         if verification_count > 0:

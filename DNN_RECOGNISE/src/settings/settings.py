@@ -117,6 +117,10 @@ HARDWARE = {
     'led_red_pin': 24,  # GPIO pin for red status LED
     'bt_speaker_mac': 'XX:XX:XX:XX:XX:XX',  # Bluetooth speaker MAC address
     'bt_speaker_name': 'CCTV_Speaker',  # Bluetooth speaker name
+    # If your Raspberry Pi is already paired and default audio is set,
+    # skip connection attempts and play via system audio (ALSA/PulseAudio)
+    'bt_skip_connect': True,
+    'bt_use_system_audio': True,
 }
 
 # CCTV System Settings
@@ -135,6 +139,12 @@ CCTV = {
     'unknown_timeout': 4.0,  # Time before marking as unknown person (seconds)
     'max_verification_attempts': 3,  # Maximum verification attempts
     'verification_cooldown': 2.0,  # Cooldown between verification attempts
+    # Guest Mode Settings
+    'guest_mode_enabled': True,  # Enable context-aware guest mode
+    'guest_mode_duration': 900.0,  # Guest mode duration in seconds (15 minutes)
+    'guest_detection_distance': 200.0,  # Maximum distance for guest association (pixels)
+    'guest_trajectory_similarity': 0.7,  # Minimum trajectory similarity for guest detection
+    'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
 }
 
 # Audio Settings
@@ -145,6 +155,8 @@ AUDIO = {
     'unknown_alert': 'Alert! Unknown person detected in the area',
     'verification_request': 'Please look at the camera for verification',
     'welcome_back': 'Welcome back',
+    'guest_mode_message': "I've noticed you have a guest. System is now in guest mode for the next 15 minutes",
+    'guest_mode_reverted': 'Guest mode expired. Reverting to normal security protocols',
     'alarm_sound_file': 'sounds/alarm.mp3',  # Alarm sound file path
     'greeting_sound_enabled': True,  # Play sound with greetings
     'alert_sound_enabled': True,  # Play sound with alerts

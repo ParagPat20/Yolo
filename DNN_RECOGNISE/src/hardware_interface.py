@@ -68,6 +68,11 @@ class LEDController:
         self.brightness_timer = None
         self.brightness_enabled = CCTV['led_auto_brightness']
 
+        # Guest mode variables
+        self.guest_mode_active = False
+        self.guest_mode_timer = None
+        self.guest_mode_pulse_interval = CCTV['guest_mode_yellow_pulse_interval']
+
         self._setup_gpio()
         self._init_led_states()
 
@@ -181,9 +186,45 @@ class LEDController:
         except Exception as e:
             logger.error(f"Error controlling brightness LED: {e}")
 
+    def start_guest_mode_pulse(self):
+        """Start pulsing yellow LED for guest mode"""
+        if self.guest_mode_active:
+            return  # Already active
+
+        self.guest_mode_active = True
+        logger.info("💛 Starting guest mode yellow LED pulse")
+
+        def pulse():
+            while self.guest_mode_active:
+                self._set_yellow(True)
+                time.sleep(self.guest_mode_pulse_interval)
+                self._set_yellow(False)
+                time.sleep(self.guest_mode_pulse_interval)
+
+        self.guest_mode_timer = threading.Thread(target=pulse, daemon=True)
+        self.guest_mode_timer.start()
+
+    def stop_guest_mode_pulse(self):
+        """Stop pulsing yellow LED for guest mode"""
+        if not self.guest_mode_active:
+            return
+
+        self.guest_mode_active = False
+        logger.info("💛 Stopping guest mode yellow LED pulse")
+
+        if self.guest_mode_timer:
+            self.guest_mode_timer.join(timeout=2.0)  # Wait for thread to finish
+            self.guest_mode_timer = None
+
+        # Turn off yellow LED
+        self._set_yellow(False)
+
     def cleanup(self):
         """Cleanup GPIO resources"""
         try:
+            # Stop guest mode pulse
+            self.stop_guest_mode_pulse()
+
             # Turn off all LEDs
             self.set_status('off')
             self.turn_off_brightness()
@@ -200,8 +241,15 @@ class BluetoothSpeaker:
         self.mac_address = HARDWARE['bt_speaker_mac']
         self.name = HARDWARE['bt_speaker_name']
         self.connected = False
+        self.skip_connect = HARDWARE.get('bt_skip_connect', False)
+        self.use_system_audio = HARDWARE.get('bt_use_system_audio', False)
 
-        self._ensure_connected()
+        # If configured to skip explicit bluetooth connection, assume audio path is ready
+        if self.skip_connect:
+            logger.info("🔊 Skipping Bluetooth connect step, using system audio output")
+            self.connected = True
+        else:
+            self._ensure_connected()
 
     def _ensure_connected(self):
         """Ensure Bluetooth speaker is connected"""
@@ -437,6 +485,21 @@ class HardwareManager:
         """Request face verification"""
         if self.bt_speaker:
             self.bt_speaker.request_verification()
+
+    def activate_guest_mode(self, host_name: str):
+        """Activate guest mode with yellow pulsing LED and announcement"""
+        if self.led_controller:
+            self.led_controller.start_guest_mode_pulse()
+        if self.bt_speaker:
+            message = f"Welcome back, {host_name}. I've noticed you have a guest. System is now in guest mode for the next 15 minutes."
+            self.bt_speaker.speak(message)
+
+    def revert_guest_mode(self):
+        """Revert from guest mode back to normal security"""
+        if self.led_controller:
+            self.led_controller.stop_guest_mode_pulse()
+        if self.bt_speaker:
+            self.bt_speaker.speak("Guest mode expired. Reverting to normal security protocols.")
 
 
 # Global hardware manager instance

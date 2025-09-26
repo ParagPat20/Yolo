@@ -65,6 +65,9 @@ class CCTVSystem:
         self.motion_detected = False
         self.last_motion_time = 0
 
+        # Guest mode tracking
+        self.guest_mode_active = False
+
         # Camera
         self.camera = None
 
@@ -170,6 +173,9 @@ class CCTVSystem:
                 # Process frame with person tracker
                 annotated_frame, tracks = self.person_tracker.process_frame(frame)
 
+                # Update guest mode status
+                self.update_guest_mode_status(tracks)
+
                 # Update FPS counter
                 self.frame_count += 1
                 current_time = time.time()
@@ -237,6 +243,22 @@ class CCTVSystem:
         if self.hardware_manager and self.hardware_manager.pir_detector:
             # Toggle would require modifying the PIR detector
             logger.info("Motion detection toggle not implemented yet")
+
+    def update_guest_mode_status(self, tracks: List):
+        """Update guest mode status based on current tracks"""
+        # Check if any track is currently in guest mode
+        current_guest_mode = any(track.is_guest for track in tracks)
+
+        if current_guest_mode != self.guest_mode_active:
+            self.guest_mode_active = current_guest_mode
+            if self.hardware_manager:
+                if current_guest_mode:
+                    # Guest mode activated - hardware manager already handles this
+                    pass
+                else:
+                    # Guest mode deactivated - revert to ready status
+                    self.hardware_manager.set_system_status('ready')
+            logger.info(f"👥 Guest mode {'activated' if current_guest_mode else 'deactivated'}")
 
     def cleanup(self):
         """Cleanup system resources"""
