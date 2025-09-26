@@ -1256,7 +1256,7 @@ class AdvancedPersonTracker:
                     logger.warning(f"🚨 Person {track.track_id} failed {track.max_verification_attempts} verification attempts - marking as UNKNOWN")
                     track.is_known = False
                     track.is_trusted = False
-                    self._handle_unknown_person_verified(track, face_roi, current_time)
+                    self._handle_unknown_person_verified(track, face_roi, current_time, frame)
                 else:
                     # Still attempting verification - request face verification again
                     remaining_attempts = track.max_verification_attempts - track.verification_attempts
@@ -1369,7 +1369,7 @@ class AdvancedPersonTracker:
                 logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - treating as unverified")
                 self._handle_unknown_person_timeout(track, current_time)
     
-    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float):
+    def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: np.ndarray):
         """Handle when unknown person shows face and is verified as unknown"""
         if not track.siren_played:
             # Play siren and alert for unknown face

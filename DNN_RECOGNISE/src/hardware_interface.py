@@ -284,10 +284,57 @@ class BluetoothSpeaker:
             self.connected = False
 
     def speak(self, text: str):
-        """Speak text using Bluetooth speaker with configurable female voice"""
+        """Speak text using Bluetooth speaker with configurable female voice (non-blocking)"""
         if not self.connected:
             logger.warning("Bluetooth speaker not connected, cannot speak")
             return
+
+        def _speak_worker(message: str):
+            try:
+                # Get voice configuration
+                engine = VOICE.get('engine', 'espeak-ng')
+                gender = VOICE.get('gender', 'female')
+                speech_rate = VOICE.get('speech_rate', 150)
+                pitch = VOICE.get('pitch', 50)
+                volume = VOICE.get('volume', 80)
+
+                if engine == 'espeak-ng':
+                    try:
+                        if gender == 'female':
+                            espeak_voice = VOICE.get('espeak_voice', 'en+f3')
+                            cmd = ['espeak-ng', '-v', espeak_voice, '-s', str(speech_rate), '-p', str(pitch), '-a', str(volume), message]
+                        else:
+                            cmd = ['espeak-ng', '-v', 'en', '-s', str(speech_rate), '-p', str(pitch), '-a', str(volume), message]
+                        subprocess.run(cmd, capture_output=True, timeout=15)
+                        logger.info("🗣️♀️ Spoken (espeak-ng)")
+                        return
+                    except Exception as e:
+                        logger.debug(f"espeak-ng {gender} voice failed: {e}")
+
+                if engine == 'festival':
+                    try:
+                        if gender == 'female':
+                            festival_voice = VOICE.get('festival_voice', 'cmu_us_slt_cg')
+                            cmd = ['bash', '-lc', f"echo '(voice_{festival_voice}) (SayText \"{message}\")' | festival"]
+                        else:
+                            cmd = ['bash', '-lc', f"echo '(voice_cmu_us_rms_cg) (SayText \"{message}\")' | festival"]
+                        subprocess.run(cmd, capture_output=True, timeout=15)
+                        logger.info("🗣️♀️ Spoken (festival)")
+                        return
+                    except Exception as e:
+                        logger.debug(f"festival {gender} voice failed: {e}")
+
+                # Final fallback
+                try:
+                    subprocess.run(['espeak-ng', '-v', 'en+f3', '-s', '140', message], capture_output=True, timeout=10)
+                    logger.info("🗣️♀️ Spoken (fallback)")
+                except Exception as e:
+                    logger.error(f"All TTS methods failed: {e}")
+            except Exception as e:
+                logger.error(f"Error in speak worker: {e}")
+
+        # Start TTS in background thread so main loop is not blocked
+        threading.Thread(target=_speak_worker, args=(text,), daemon=True).start()
 
         try:
             # Get voice configuration

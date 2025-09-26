@@ -168,8 +168,8 @@ VOICE = {
     'gender': 'female',  # Options: 'female', 'male'
     'espeak_voice': 'en+f3',  # espeak-ng female voice (en+f1, en+f2, en+f3, en+f4)
     'festival_voice': 'cmu_us_slt_cg',  # Festival female voice
-    'speech_rate': 150,  # Speech rate (words per minute)
-    'pitch': 50,  # Pitch adjustment (0-100, 50 = natural female)
+    'speech_rate': 100,  # Speech rate (words per minute)
+    'pitch': 30,  # Pitch adjustment (0-100, 50 = natural female)
     'volume': 80,  # Volume (0-100)
     'language': 'en',  # Language code
 }
