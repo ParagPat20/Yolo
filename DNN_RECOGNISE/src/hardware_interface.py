@@ -5,6 +5,7 @@ import time
 import logging
 import subprocess
 import os
+import shutil
 from datetime import datetime
 from typing import Optional, Callable
 from settings.settings import HARDWARE, CCTV, AUDIO, VOICE
@@ -411,17 +412,57 @@ class BluetoothSpeaker:
             logger.error(f"Error speaking text: {e}")
 
     def play_sound_file(self, filepath: str):
-        """Play sound file through Bluetooth speaker"""
-        if not self.connected or not os.path.exists(filepath):
-            logger.warning(f"Cannot play sound file: connected={self.connected}, file exists={os.path.exists(filepath)}")
+        """Play sound file through Bluetooth speaker (Linux-only). Skips on Windows."""
+        # Resolve absolute path for logging and subprocess
+        abs_path = os.path.abspath(filepath)
+
+        if not self.connected or not os.path.exists(abs_path):
+            logger.warning(f"Cannot play sound file: connected={self.connected}, file exists={os.path.exists(abs_path)}")
             return
 
         try:
-            # Use aplay or mpg123 to play the sound file
-            # Adjust this based on your sound file format
-            cmd = ['aplay', filepath] if filepath.endswith('.wav') else ['mpg123', filepath]
-            subprocess.run(cmd, capture_output=True, timeout=30)
-            logger.info(f"🔊 Played sound file: {filepath}")
+            # Only attempt playback on Linux (Raspberry Pi)
+            if os.name != 'posix':
+                logger.info("🔇 Skipping sound playback on non-Linux platform")
+                return
+
+            # Choose candidate players by extension
+            ext = os.path.splitext(abs_path)[1].lower()
+            if ext == '.wav':
+                candidates = [
+                    ['aplay', abs_path],
+                    ['paplay', abs_path],
+                    ['ffplay', '-nodisp', '-autoexit', abs_path],
+                    ['mpv', '--no-video', abs_path],
+                ]
+            else:  # assume mp3 or others
+                candidates = [
+                    ['mpg123', abs_path],
+                    ['omxplayer', abs_path],
+                    ['mpv', '--no-video', abs_path],
+                    ['ffplay', '-nodisp', '-autoexit', abs_path],
+                    ['aplay', abs_path],  # may work if codecs available
+                ]
+
+            # Find first available tool
+            chosen_cmd = None
+            for cmd in candidates:
+                tool = cmd[0]
+                if shutil.which(tool):
+                    chosen_cmd = cmd
+                    break
+
+            if not chosen_cmd:
+                logger.warning(
+                    "No audio player found (tried mpg123/omxplayer/mpv/ffplay/aplay). "
+                    "Install one, e.g.: sudo apt-get install mpg123"
+                )
+                return
+
+            # Execute
+            logger.info(f"🔊 Playing sound via '{chosen_cmd[0]}' -> {abs_path}")
+            subprocess.run(chosen_cmd, capture_output=True, timeout=60)
+            logger.info(f"✅ Sound playback finished: {abs_path}")
 
         except Exception as e:
             logger.error(f"Error playing sound file: {e}")

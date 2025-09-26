@@ -1244,6 +1244,10 @@ class AdvancedPersonTracker:
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 
         else:
+            # If already handled as unknown or alert sent, do not continue attempts
+            if (not track.is_known) or getattr(track, 'siren_played', False) or getattr(track, 'alert_sent', False):
+                return
+
             # TRIPLE VERIFICATION: Check cooldown before incrementing attempts
             time_since_last_attempt = current_time - track.last_verification_attempt
             
@@ -1258,6 +1262,9 @@ class AdvancedPersonTracker:
                     logger.warning(f"🚨 Person {track.track_id} failed {track.max_verification_attempts} verification attempts - marking as UNKNOWN")
                     track.is_known = False
                     track.is_trusted = False
+                    # Stop further verification attempts going forward
+                    track.verification_requested = False
+                    track.verification_attempts = track.max_verification_attempts
                     self._handle_unknown_person_verified(track, face_roi, current_time)
                 else:
                     # Still attempting verification - request face verification again
@@ -1379,9 +1386,12 @@ class AdvancedPersonTracker:
             print(f"\n🚨 ALERT! Unknown face detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 SECURITY BREACH - Unauthorized person identified!")
             
-            # Play siren and voice alert
+            # Play siren/voice via hardware manager on Pi; otherwise just log
             logger.info("🔊 Attempting to play unknown alert...")
-            self.sound_system.play_unknown_alert()
+            if self.hardware_manager:
+                self.hardware_manager.play_alarm()
+            else:
+                logger.info("🔇 No hardware manager available for alarm; skipping")
             
             # Save unknown face and full body
             if SECURITY['log_unknown_faces']:
