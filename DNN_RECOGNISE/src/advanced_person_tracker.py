@@ -126,6 +126,9 @@ class PersonTrack:
     is_recording: bool = False  # Whether this person is being recorded
     recording_start_time: float = 0.0  # When recording started
     last_greeting_time: float = 0.0  # Last time this person was greeted
+    # Alarm/recording control
+    alarm_end_time: float = 0.0  # When alarm should end for this person
+    recording_end_time: float = 0.0  # Per-track recording end timestamp
 
     # Guest Mode fields
     is_guest: bool = False  # Whether this person is a guest
@@ -735,6 +738,9 @@ class WindowsSoundAlertSystem:
         self.play_token = 0  # Invalidate older sounds when a new one starts
         self.current_process = None  # Track active subprocess for TTS/siren
         self.thread_lock = threading.Lock()
+        self.alarm_active = False
+        self.alarm_thread = None
+        self.alarm_sound_path = AUDIO.get('alarm_sound_file', '') if 'AUDIO' in globals() else ''
         
         # Threading control
         self.sound_threads = []  # Keep track of active sound threads
@@ -765,8 +771,14 @@ class WindowsSoundAlertSystem:
         """Start a sound operation in a separate thread; cancel previous and play latest only"""
         self._cleanup_threads()
 
-        # Always cancel previous audio before starting a new one (latest wins)
-        self.stop_all_sounds()
+        # If an alarm is active, ignore non-alarm requests
+        if self.alarm_active and target_func not in (self._alarm_worker,):
+            logger.debug("🔔 Alarm active; skipping non-alarm sound request")
+            return
+
+        # Always cancel previous audio before starting a new one (unless starting alarm)
+        if target_func not in (self._alarm_worker,):
+            self.stop_all_sounds()
 
         # Invalidate older tasks and create a new token
         with self.thread_lock:
@@ -812,6 +824,44 @@ class WindowsSoundAlertSystem:
                         except Exception:
                             pass
                         break
+                time.sleep(0.05)
+        finally:
+            with self.thread_lock:
+                if self.current_process and self.current_process.poll() is not None:
+                    self.current_process = None
+
+    def _play_external_for_duration(self, args: List[str], token: int, duration_sec: int):
+        """Play an external command for up to duration_sec, cancellable by token."""
+        start_time = time.time()
+        try:
+            with self.thread_lock:
+                if token != self.play_token:
+                    return
+                # terminate any current process defensively
+                if self.current_process and self.current_process.poll() is None:
+                    try:
+                        self.current_process.terminate()
+                    except Exception:
+                        pass
+                self.current_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc = self.current_process
+
+            while True:
+                if proc.poll() is not None:
+                    break
+                with self.thread_lock:
+                    if token != self.play_token:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        break
+                if time.time() - start_time >= duration_sec:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    break
                 time.sleep(0.05)
         finally:
             with self.thread_lock:
@@ -874,6 +924,74 @@ class WindowsSoundAlertSystem:
                 self._spawn_process(['powershell', '-Command', ps_command], token)
         except Exception as e:
             logger.error(f"Failed to speak text: {e}")
+
+    def _alarm_worker(self, token: int, duration_sec: int):
+        """Run a non-preemptible alarm for duration_sec seconds."""
+        end_time = time.time() + max(1, int(duration_sec))
+        with self.thread_lock:
+            self.alarm_active = True
+        try:
+            # Try to use configured MP3 alarm if available
+            try_mp3 = False
+            alarm_path = self.alarm_sound_path
+            if isinstance(alarm_path, str) and len(alarm_path) > 0:
+                mp3_path = alarm_path if os.path.isabs(alarm_path) else os.path.join(os.getcwd(), alarm_path)
+                if os.path.exists(mp3_path):
+                    try_mp3 = True
+            if try_mp3:
+                # Linux/RPi: prefer mpg123/ffplay/omxplayer
+                if platform.system() == 'Linux':
+                    if shutil.which('mpg123'):
+                        self._play_external_for_duration(['mpg123', '-q', '--loop', '-1', mp3_path], token, duration_sec)
+                        return
+                    elif shutil.which('ffplay'):
+                        self._play_external_for_duration(['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', '-loop', '0', mp3_path], token, duration_sec)
+                        return
+                    elif shutil.which('omxplayer'):
+                        self._play_external_for_duration(['omxplayer', '--no-keys', '--loop', mp3_path], token, duration_sec)
+                        return
+                # Windows: use PowerShell + Windows Media Player COM
+                if platform.system() == 'Windows' and shutil.which('powershell'):
+                    seconds = max(1, int(duration_sec))
+                    ps = (
+                        "$p = New-Object -ComObject WMPlayer.OCX; "
+                        f"$m = $p.newMedia(\"{mp3_path}\"); "
+                        "$p.controls.play(); "
+                        f"Start-Sleep -Seconds {seconds}; "
+                        "$p.controls.stop(); $p.close();"
+                    )
+                    self._spawn_process(['powershell', '-NoProfile', '-Command', ps], token)
+                    return
+
+            # Fallback: Loop until duration expires making alert tones
+            while time.time() < end_time:
+                # Produce alarm sound chunk
+                if self.use_espeak_ng:
+                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '230', 'Alert!'], token)
+                elif self.sound_enabled and not self.use_espeak_ng and 'winsound' in globals():
+                    try:
+                        winsound.Beep(1000, 300)
+                        winsound.Beep(700, 300)
+                    except Exception:
+                        pass
+                else:
+                    # No audio available; just wait a bit
+                    time.sleep(0.5)
+
+                # Small pause to avoid busy loop
+                time.sleep(0.1)
+        finally:
+            with self.thread_lock:
+                self.alarm_active = False
+            # Ensure any residual process is stopped
+            self.stop_all_sounds()
+
+    def start_alarm(self, duration_sec: int = 120):
+        """Public method to start a 2-minute alarm (non-preemptible)."""
+        # If already active, restart timer by stopping and starting
+        if self.alarm_active:
+            self.stop_all_sounds()
+        self._start_sound_thread(self._alarm_worker, duration_sec)
     
     def play_verification_request(self):
         """Play sound and voice alert for verification request"""
@@ -1195,7 +1313,10 @@ class AdvancedPersonTracker:
             if track.is_recording:
                 # Check if recording should be stopped
                 recording_duration = current_time - track.recording_start_time
-                if recording_duration > CCTV['recording_duration']:
+                # Prefer per-track recording_end_time if set, else default duration
+                if (track.recording_end_time and current_time >= track.recording_end_time) or (
+                    not track.recording_end_time and recording_duration > CCTV['recording_duration']
+                ):
                     self._stop_recording(track.track_id)
                     track.is_recording = False
                 else:
@@ -1485,12 +1606,16 @@ class AdvancedPersonTracker:
             print(f"\n🚨 ALERT! Unknown face detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 SECURITY BREACH - Unauthorized person identified!")
             
-            # Play siren/voice via hardware manager on Pi; otherwise just log
-            logger.info("🔊 Attempting to play unknown alert...")
+            # Play 2-minute alarm and start recording
+            logger.info("🔊 Attempting to play 2-minute unknown alert and start recording...")
             if self.hardware_manager:
-                self.hardware_manager.play_alarm()
-            else:
-                logger.info("🔇 No hardware manager available for alarm; skipping")
+                try:
+                    self.hardware_manager.play_alarm()
+                except Exception:
+                    pass
+            # Software alarm and recording
+            if self.sound_system:
+                self.sound_system.start_alarm(duration_sec=120)
             
             # Save unknown face and full body
             if SECURITY['log_unknown_faces']:
@@ -1505,6 +1630,11 @@ class AdvancedPersonTracker:
                 except Exception as e:
                     logger.error(f"Error saving unknown full body: {e}")
             
+            # Ensure recording runs for full 2 minutes
+            if CCTV['recording_enabled']:
+                track.recording_end_time = current_time + 120
+                if not track.is_recording:
+                    self._start_recording(track)
             track.siren_played = True
             track.alert_sent = True
     
@@ -1514,9 +1644,13 @@ class AdvancedPersonTracker:
             logger.warning(f"⏰ Person {track.track_id} didn't verify face - potential security concern")
             print(f"⚠️ Unverified person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Face verification required")
 
-            # Stop recording if it was started
-            if track.is_recording:
-                self._stop_recording(track.track_id)
+            # Start a 2-minute alarm and recording to capture movement
+            if self.sound_system:
+                self.sound_system.start_alarm(duration_sec=120)
+            if CCTV['recording_enabled']:
+                track.recording_end_time = current_time + 120
+                if not track.is_recording:
+                    self._start_recording(track)
 
             track.alert_sent = True
 

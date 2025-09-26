@@ -13,10 +13,16 @@ import time
 import threading
 from datetime import datetime
 from typing import Optional, Tuple, List
+import platform
+import shutil
+import subprocess
 
 from settings.settings import (
     CAMERA, CCTV, AUDIO, HARDWARE, PATHS
 )
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Try to import our components
 try:
@@ -38,9 +44,16 @@ except ImportError:
     TRACKER_AVAILABLE = False
     logger.error("❌ Advanced person tracker not available")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+
+# Raspberry Pi / Linux voice support (aligned with advanced_person_tracker)
+try:
+    if platform.system() == 'Linux' and shutil.which('espeak-ng') is not None:
+        RPI_SPEECH_AVAILABLE = True
+        logger.info("🗣️ Linux/Raspberry Pi speech available via espeak-ng (main)")
+    else:
+        RPI_SPEECH_AVAILABLE = False
+except Exception:
+    RPI_SPEECH_AVAILABLE = False
 
 class CCTVSystem:
     """Main CCTV System integrating all components"""

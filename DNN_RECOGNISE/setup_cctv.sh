@@ -29,8 +29,8 @@ sudo apt install -y festvox-kallpc16k
 
 # Install Python packages
 echo -e "${YELLOW}🐍 Installing Python packages...${NC}"
-pip3 install --upgrade pip
-pip3 install -r requirements_cctv.txt
+pip3 install --upgrade pip --break-system-packages
+pip3 install -r requirements_cctv.txt --break-system-packages
 
 # Enable camera interface
 echo -e "${YELLOW}📷 Enabling camera interface...${NC}"
@@ -136,19 +136,26 @@ festival -b /tmp/test_tts 2>/dev/null || echo "Festival test completed"
 # Test camera
 echo -e "${YELLOW}📷 Testing camera...${NC}"
 python3 -c "
-import cv2
-cap = cv2.VideoCapture(0)
-if cap.isOpened():
-    ret, frame = cap.read()
-    if ret:
+try:
+    from picamera2 import Picamera2
+    import time
+    picam2 = Picamera2()
+    picam2.start()
+    time.sleep(2)  # Allow camera to warm up
+    frame = picam2.capture_array()
+    if frame is not None:
+        from PIL import Image
+        img = Image.fromarray(frame)
+        img.save('camera_test.jpg')
         print('✅ Camera test successful')
-        cv2.imwrite('camera_test.jpg', frame)
         print('📸 Test image saved as camera_test.jpg')
     else:
         print('❌ Camera test failed - no frame received')
-    cap.release()
-else:
-    print('❌ Camera test failed - could not open camera')
+    picam2.close()
+except ImportError:
+    print('❌ picamera2 module not found. Please install with: pip install picamera2')
+except Exception as e:
+    print(f'❌ Camera test failed: {e}')
 "
 
 # Setup complete
