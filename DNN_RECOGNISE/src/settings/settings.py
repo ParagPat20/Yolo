@@ -135,7 +135,7 @@ CCTV = {
     'recording_resolution': (1280, 720),  # Recording resolution
     'greeting_enabled': True,  # Enable time-based greetings
     'greeting_cooldown': 300.0,  # Seconds between greetings for same person
-    'verification_timeout': 8.0,  # Time to wait for face verification (seconds)
+    'verification_timeout': 15.0,  # Time to wait for face verification before alarm (seconds)
     'unknown_timeout': 4.0,  # Time before marking as unknown person (seconds)
     'max_verification_attempts': 3,  # Maximum verification attempts
     'verification_cooldown': 2.0,  # Cooldown between verification attempts

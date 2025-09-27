@@ -85,6 +85,9 @@ class CCTVSystem:
         self.camera = None
 
         logger.info("✅ CCTV System initialized successfully")
+        
+        # Play welcome message on boot
+        self._play_welcome_message()
 
     def initialize_camera(self) -> bool:
         """Initialize camera with enhanced settings"""
@@ -272,6 +275,38 @@ class CCTVSystem:
                     # Guest mode deactivated - revert to ready status
                     self.hardware_manager.set_system_status('ready')
             logger.info(f"👥 Guest mode {'activated' if current_guest_mode else 'deactivated'}")
+
+    def _play_welcome_message(self):
+        """Play welcome message on system boot"""
+        try:
+            logger.info("🎵 Playing welcome message...")
+            
+            # Check if we have access to the person tracker's sound system
+            if hasattr(self.person_tracker, 'sound_system'):
+                sound_system = self.person_tracker.sound_system
+                
+                if sound_system.voice_enabled:
+                    # Use the person tracker's sound system for voice
+                    sound_system._speak_text(0, "Welcome to JeCH AeroTech")
+                elif sound_system.sound_enabled:
+                    # Fallback to beep if voice is not available
+                    sound_system._play_windows_beep(0)
+                else:
+                    logger.info("🔇 Audio system not available")
+            else:
+                # Fallback: try direct espeak-ng call
+                if RPI_SPEECH_AVAILABLE:
+                    try:
+                        subprocess.run(['espeak-ng', '-s', '163', '-p', '55', 'Welcome to JeCH AeroTech'], 
+                                     timeout=5, capture_output=True)
+                        logger.info("🗣️ Welcome message played via espeak-ng")
+                    except Exception as e:
+                        logger.warning(f"Failed to play welcome message: {e}")
+                else:
+                    logger.info("🔇 No audio system available for welcome message")
+                    
+        except Exception as e:
+            logger.error(f"Error playing welcome message: {e}")
 
     def cleanup(self):
         """Cleanup system resources"""

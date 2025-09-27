@@ -135,6 +135,10 @@ class PersonTrack:
     guest_associated_with: Optional[str] = None  # Name of the verified person they're associated with
     guest_mode_start_time: float = 0.0  # When guest mode started for this person
     trajectory_history: deque = None  # Store recent trajectory points for guest detection
+    
+    # Enhanced verification tracking
+    verification_reminder_count: int = 0  # Number of verification reminders sent
+    last_verification_reminder: float = 0.0  # Time of last verification reminder
 
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
@@ -873,7 +877,7 @@ class WindowsSoundAlertSystem:
         try:
             if self.use_espeak_ng:
                 # Quick audible ping via espeak-ng
-                self._spawn_process(['espeak-ng', '-a', '200', '-s', '300', 'beep'], token)
+                self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'beep'], token)
             else:
                 winsound.Beep(800, 200)  # 800Hz for 200ms
         except Exception as e:
@@ -888,7 +892,7 @@ class WindowsSoundAlertSystem:
                     with self.thread_lock:
                         if token != self.play_token:
                             return
-                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '240', 'Alert!'], token)
+                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'Alert!'], token)
             else:
                 # Play multiple beeps to simulate siren
                 for i in range(6):  # 3 seconds worth
@@ -904,7 +908,7 @@ class WindowsSoundAlertSystem:
         """Speak text using Windows TTS"""
         try:
             if self.use_espeak_ng:
-                self._spawn_process(['espeak-ng', text], token)
+                self._spawn_process(['espeak-ng', '-s', '163', '-p', '55', text], token)
             elif self.use_win32_speech:
                 # Use Windows Speech API
                 # Purge any queued speech so latest wins
@@ -967,7 +971,7 @@ class WindowsSoundAlertSystem:
             while time.time() < end_time:
                 # Produce alarm sound chunk
                 if self.use_espeak_ng:
-                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '230', 'Alert!'], token)
+                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'Alert!'], token)
                 elif self.sound_enabled and not self.use_espeak_ng and 'winsound' in globals():
                     try:
                         winsound.Beep(1000, 300)
@@ -1538,11 +1542,13 @@ class AdvancedPersonTracker:
         return None
     
     def _handle_no_face_detected(self, track: PersonTrack, current_time: float):
-        """Handle when no face is detected for a person - enhanced for CCTV"""
+        """Handle when no face is detected for a person - enhanced for CCTV with repeated verification requests"""
         if track.needs_face_check and not track.verification_requested:
             # New person detected but no face visible - request verification
             track.verification_requested = True
             track.verification_start_time = current_time
+            track.verification_reminder_count = 0  # Track number of reminders sent
+            track.last_verification_reminder = 0.0  # Track last reminder time
 
             logger.info(f"🔍 Person {track.track_id} detected - requesting face verification")
             print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face")
@@ -1551,30 +1557,44 @@ class AdvancedPersonTracker:
             if self.hardware_manager:
                 self.hardware_manager.set_system_status('verifying')
 
-            # Play verification request
-            if self.hardware_manager:
-                self.hardware_manager.request_verification()
-            elif SECURITY.get('voice_alerts', False):
-                self.sound_system.play_verification_request()
+            # Play initial verification request
+            self._play_verification_request(track)
 
         elif track.verification_requested:
-            # Enhanced verification logic with different timeouts
+            # Enhanced verification logic with repeated requests and progressive escalation
             time_since_request = current_time - track.verification_start_time
+            time_since_last_reminder = current_time - getattr(track, 'last_verification_reminder', 0)
 
             # Use CCTV-specific timeout settings
             verification_timeout = track.verification_timeout
             unknown_timeout = track.unknown_timeout
 
-            # Give voice reminder every 4 seconds during first phase
-            if time_since_request < unknown_timeout and int(time_since_request) % 4 == 0 and int(time_since_request) > 0:
-                if (self.hardware_manager or SECURITY.get('voice_alerts', False)) and not hasattr(track, '_last_reminder') or current_time - getattr(track, '_last_reminder', 0) > 3.0:
-                    track._last_reminder = current_time
-                    if self.hardware_manager:
-                        self.hardware_manager.request_verification()
-                    elif SECURITY.get('voice_alerts', False):
-                        self.sound_system.play_verification_reminder()
+            # Progressive reminder system
+            reminder_interval = 3.0  # Remind every 3 seconds
+            max_reminders = 5  # Maximum number of reminders before alarm
 
-            # Check if we've passed the "unknown" threshold (4 seconds)
+            # Send repeated verification requests
+            if (time_since_last_reminder >= reminder_interval and 
+                getattr(track, 'verification_reminder_count', 0) < max_reminders):
+                
+                track.verification_reminder_count = getattr(track, 'verification_reminder_count', 0) + 1
+                track.last_verification_reminder = current_time
+                
+                # Progressive urgency in messages
+                if track.verification_reminder_count <= 2:
+                    message = "Please show your face for verification"
+                elif track.verification_reminder_count <= 4:
+                    message = "Face verification required - Look at camera"
+                else:
+                    message = "Final warning - Show your face now"
+
+                logger.info(f"🔍 Person {track.track_id} - Reminder {track.verification_reminder_count}/{max_reminders}: {message}")
+                print(f"🔍 Reminder {track.verification_reminder_count}: {message}")
+
+                # Play verification reminder
+                self._play_verification_reminder(track, track.verification_reminder_count)
+
+            # Check if we've passed the "unknown" threshold (4 seconds) - start recording
             if time_since_request > unknown_timeout and not track.siren_played:
                 # Mark as potential unknown person
                 logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
@@ -1592,11 +1612,66 @@ class AdvancedPersonTracker:
                 if self.hardware_manager:
                     self.hardware_manager.set_system_status('alert')
 
-            # Check if verification timeout has passed (8 seconds)
+            # Check if verification timeout has passed (15 seconds) - start full alarm
             if time_since_request > verification_timeout:
-                # Full timeout - treat as unverified person
-                logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - treating as unverified")
-                self._handle_unknown_person_timeout(track, current_time)
+                # Full timeout - treat as unverified person and start alarm
+                logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - starting security alarm")
+                self._handle_verification_timeout_alarm(track, current_time)
+
+    def _play_verification_request(self, track: PersonTrack):
+        """Play initial verification request"""
+        try:
+            if self.hardware_manager:
+                self.hardware_manager.request_verification()
+            elif SECURITY.get('voice_alerts', False):
+                self.sound_system.play_verification_request()
+        except Exception as e:
+            logger.error(f"Error playing verification request: {e}")
+
+    def _play_verification_reminder(self, track: PersonTrack, reminder_count: int):
+        """Play verification reminder with progressive urgency"""
+        try:
+            if self.hardware_manager:
+                self.hardware_manager.request_verification()
+            elif SECURITY.get('voice_alerts', False):
+                # Progressive urgency in voice
+                if reminder_count <= 2:
+                    self.sound_system.play_verification_reminder()
+                elif reminder_count <= 4:
+                    # More urgent reminder
+                    if hasattr(self.sound_system, '_speak_text'):
+                        self.sound_system._speak_text(0, "Face verification required - Look at camera")
+                else:
+                    # Final warning
+                    if hasattr(self.sound_system, '_speak_text'):
+                        self.sound_system._speak_text(0, "Final warning - Show your face now")
+        except Exception as e:
+            logger.error(f"Error playing verification reminder: {e}")
+
+    def _handle_verification_timeout_alarm(self, track: PersonTrack, current_time: float):
+        """Handle verification timeout by starting full security alarm"""
+        if not track.alert_sent:
+            logger.warning(f"🚨 Person {track.track_id} failed to verify face after timeout - starting security alarm")
+            print(f"🚨 SECURITY ALERT! Person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) failed face verification")
+            print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
+
+            # Start 2-minute security alarm
+            if self.sound_system:
+                self.sound_system.start_alarm(duration_sec=120)
+            
+            # Start recording for full duration
+            if CCTV['recording_enabled']:
+                track.recording_end_time = current_time + 120  # 2 minutes
+                if not track.is_recording:
+                    self._start_recording(track)
+
+            # Update hardware status
+            if self.hardware_manager:
+                self.hardware_manager.set_system_status('alert')
+                self.hardware_manager.play_alarm()
+
+            track.alert_sent = True
+            track.siren_played = True
     
     def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""
@@ -1632,7 +1707,7 @@ class AdvancedPersonTracker:
             
             # Ensure recording runs for full 2 minutes
             if CCTV['recording_enabled']:
-                track.recording_end_time = current_time + 120
+                track.recording_end_time = current_time + 10
                 if not track.is_recording:
                     self._start_recording(track)
             track.siren_played = True
