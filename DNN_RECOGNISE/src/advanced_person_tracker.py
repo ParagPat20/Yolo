@@ -734,11 +734,25 @@ class WindowsSoundAlertSystem:
     """Windows-native sound and voice alert system with threading"""
     
     def __init__(self):
-        self.sound_enabled = SECURITY.get('alert_sound', False) and (SOUND_AVAILABLE or 'Linux' in platform.system())
-        self.voice_enabled = SECURITY.get('voice_alerts', False) and (VOICE_AVAILABLE or ('Linux' in platform.system() and 'RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE))
+        # Debug sound system availability
+        logger.info(f"🔍 Sound system debug:")
+        logger.info(f"  - SOUND_AVAILABLE: {SOUND_AVAILABLE}")
+        logger.info(f"  - VOICE_AVAILABLE: {VOICE_AVAILABLE}")
+        logger.info(f"  - RPI_SPEECH_AVAILABLE: {RPI_SPEECH_AVAILABLE if 'RPI_SPEECH_AVAILABLE' in globals() else 'Not defined'}")
+        logger.info(f"  - Platform: {platform.system()}")
+        logger.info(f"  - SECURITY alert_sound: {SECURITY.get('alert_sound', False)}")
+        logger.info(f"  - SECURITY voice_alerts: {SECURITY.get('voice_alerts', False)}")
+        
+        # More permissive sound system initialization
+        self.sound_enabled = SECURITY.get('alert_sound', False) and (SOUND_AVAILABLE or platform.system() in ['Linux', 'Windows'])
+        self.voice_enabled = SECURITY.get('voice_alerts', False) and (VOICE_AVAILABLE or ('RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE))
         self.last_voice_time = 0.0  # Cooldown for voice alerts
         self.use_win32_speech = False
-        self.use_espeak_ng = bool('Linux' in platform.system() and 'RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE)
+        self.use_espeak_ng = bool('RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE)
+        
+        logger.info(f"  - Final sound_enabled: {self.sound_enabled}")
+        logger.info(f"  - Final voice_enabled: {self.voice_enabled}")
+        logger.info(f"  - Final use_espeak_ng: {self.use_espeak_ng}")
         self.play_token = 0  # Invalidate older sounds when a new one starts
         self.current_process = None  # Track active subprocess for TTS/siren
         self.thread_lock = threading.Lock()
@@ -931,6 +945,11 @@ class WindowsSoundAlertSystem:
 
     def _alarm_worker(self, token: int, duration_sec: int):
         """Run a non-preemptible alarm for duration_sec seconds."""
+        logger.info(f"🔊 _alarm_worker started with duration: {duration_sec} seconds")
+        logger.info(f"  - use_espeak_ng: {self.use_espeak_ng}")
+        logger.info(f"  - sound_enabled: {self.sound_enabled}")
+        logger.info(f"  - voice_enabled: {self.voice_enabled}")
+        
         end_time = time.time() + max(1, int(duration_sec))
         with self.thread_lock:
             self.alarm_active = True
@@ -938,10 +957,18 @@ class WindowsSoundAlertSystem:
             # Try to use configured MP3 alarm if available
             try_mp3 = False
             alarm_path = self.alarm_sound_path
+            logger.info(f"🔊 Checking for MP3 alarm file: {alarm_path}")
+            
             if isinstance(alarm_path, str) and len(alarm_path) > 0:
                 mp3_path = alarm_path if os.path.isabs(alarm_path) else os.path.join(os.getcwd(), alarm_path)
+                logger.info(f"🔊 MP3 path: {mp3_path}")
+                logger.info(f"🔊 MP3 file exists: {os.path.exists(mp3_path)}")
                 if os.path.exists(mp3_path):
                     try_mp3 = True
+                    logger.info("🔊 MP3 file found, attempting to play")
+            else:
+                logger.info("🔊 No MP3 alarm path configured")
+                
             if try_mp3:
                 # Linux/RPi: prefer mpg123/ffplay/omxplayer
                 if platform.system() == 'Linux':
@@ -956,6 +983,7 @@ class WindowsSoundAlertSystem:
                         return
                 # Windows: use PowerShell + Windows Media Player COM
                 if platform.system() == 'Windows' and shutil.which('powershell'):
+                    logger.info("🔊 Using Windows PowerShell + Windows Media Player for MP3")
                     seconds = max(1, int(duration_sec))
                     ps = (
                         "$p = New-Object -ComObject WMPlayer.OCX; "
@@ -964,24 +992,34 @@ class WindowsSoundAlertSystem:
                         f"Start-Sleep -Seconds {seconds}; "
                         "$p.controls.stop(); $p.close();"
                     )
+                    logger.info(f"🔊 Starting PowerShell MP3 playback for {seconds} seconds")
                     self._spawn_process(['powershell', '-NoProfile', '-Command', ps], token)
+                    logger.info("🔊 PowerShell MP3 playback started, returning from alarm worker")
                     return
+                else:
+                    logger.info("🔊 PowerShell not available, falling back to other methods")
 
             # Fallback: Loop until duration expires making alert tones
+            logger.info("🔊 Using fallback alarm method (no MP3 file)")
+            alarm_count = 0
             while time.time() < end_time:
                 # Produce alarm sound chunk
                 if self.use_espeak_ng:
+                    logger.info(f"🔊 Playing espeak-ng alarm chunk {alarm_count}")
                     self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'Alert!'], token)
                 elif self.sound_enabled and not self.use_espeak_ng and 'winsound' in globals():
                     try:
+                        logger.info(f"🔊 Playing Windows beep alarm chunk {alarm_count}")
                         winsound.Beep(1000, 300)
                         winsound.Beep(700, 300)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"❌ Error playing Windows beep: {e}")
                 else:
                     # No audio available; just wait a bit
+                    logger.warning(f"🔇 No audio available for alarm chunk {alarm_count}")
                     time.sleep(0.5)
 
+                alarm_count += 1
                 # Small pause to avoid busy loop
                 time.sleep(0.1)
         finally:
@@ -992,9 +1030,18 @@ class WindowsSoundAlertSystem:
 
     def start_alarm(self, duration_sec: int = 120):
         """Public method to start a 2-minute alarm (non-preemptible)."""
+        logger.info(f"🔊 start_alarm called with duration: {duration_sec} seconds")
+        logger.info(f"  - sound_enabled: {self.sound_enabled}")
+        logger.info(f"  - voice_enabled: {self.voice_enabled}")
+        logger.info(f"  - use_espeak_ng: {self.use_espeak_ng}")
+        logger.info(f"  - alarm_active: {self.alarm_active}")
+        
         # If already active, restart timer by stopping and starting
         if self.alarm_active:
+            logger.info("🔊 Stopping existing alarm before starting new one")
             self.stop_all_sounds()
+        
+        logger.info("🔊 Starting alarm worker thread")
         self._start_sound_thread(self._alarm_worker, duration_sec)
     
     def play_verification_request(self):
@@ -1117,6 +1164,10 @@ class AdvancedPersonTracker:
             self.hardware_manager.set_system_status('ready')
 
         logger.info("✅ Advanced Person Tracking System with CCTV Integration initialized")
+    
+    def _calculate_distance(self, center1: Tuple[float, float], center2: Tuple[float, float]) -> float:
+        """Calculate Euclidean distance between two centers"""
+        return math.sqrt((center1[0] - center2[0])**2 + (center1[1] - center2[1])**2)
     
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, List[PersonTrack]]:
         """Process a single frame and return annotated frame with tracks - enhanced for CCTV"""
@@ -1468,6 +1519,21 @@ class AdvancedPersonTracker:
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 
         else:
+            # Unknown person detected - trigger immediate alarm if not already handled
+            if not track.siren_played and not track.alert_sent:
+                logger.warning(f"🚨 UNKNOWN PERSON DETECTED - Person {track.track_id} (confidence: {confidence:.3f})")
+                print(f"🚨 ALERT! Unknown person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
+                print("🚨 SECURITY BREACH - Unauthorized person identified!")
+                
+                # Trigger immediate alarm
+                self._trigger_unknown_person_alarm(track, current_time)
+                
+                # Save unknown face if enabled
+                if SECURITY['log_unknown_faces']:
+                    self._save_unknown_face(face_roi, track.track_id)
+                
+                return  # Exit early since we've handled the unknown person
+            
             # If already handled as unknown or alert sent, do not continue attempts
             if (not track.is_known) or getattr(track, 'siren_played', False) or getattr(track, 'alert_sent', False):
                 return
@@ -1594,7 +1660,7 @@ class AdvancedPersonTracker:
                 # Play verification reminder
                 self._play_verification_reminder(track, track.verification_reminder_count)
 
-            # Check if we've passed the "unknown" threshold (4 seconds) - start recording
+            # Check if we've passed the "unknown" threshold (4 seconds) - start recording and alarm
             if time_since_request > unknown_timeout and not track.siren_played:
                 # Mark as potential unknown person
                 logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
@@ -1604,13 +1670,9 @@ class AdvancedPersonTracker:
                 if CCTV['recording_enabled']:
                     self._start_recording(track)
 
-                # Play unknown alert
-                if self.hardware_manager:
-                    self.hardware_manager.play_alarm()
-
-                # Update status LED
-                if self.hardware_manager:
-                    self.hardware_manager.set_system_status('alert')
+                # Play unknown alert - ENHANCED ALARM TRIGGER
+                logger.warning(f"🚨 TRIGGERING ALARM for unknown person {track.track_id}")
+                self._trigger_unknown_person_alarm(track, current_time)
 
             # Check if verification timeout has passed (15 seconds) - start full alarm
             if time_since_request > verification_timeout:
@@ -1621,10 +1683,20 @@ class AdvancedPersonTracker:
     def _play_verification_request(self, track: PersonTrack):
         """Play initial verification request"""
         try:
+            logger.info(f"🔊 _play_verification_request called for track {track.track_id}")
+            logger.info(f"  - hardware_manager available: {self.hardware_manager is not None}")
+            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled}")
+            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled}")
+            logger.info(f"  - SECURITY voice_alerts: {SECURITY.get('voice_alerts', False)}")
+            
             if self.hardware_manager:
+                logger.info("🔊 Using hardware manager for verification request")
                 self.hardware_manager.request_verification()
             elif SECURITY.get('voice_alerts', False):
+                logger.info("🔊 Using sound system for verification request")
                 self.sound_system.play_verification_request()
+            else:
+                logger.warning("🔇 No audio system available for verification request")
         except Exception as e:
             logger.error(f"Error playing verification request: {e}")
 
@@ -1655,9 +1727,18 @@ class AdvancedPersonTracker:
             print(f"🚨 SECURITY ALERT! Person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) failed face verification")
             print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
 
+            # Debug sound system before alarm
+            logger.info(f"🔊 Starting alarm for track {track.track_id}")
+            logger.info(f"  - sound_system available: {self.sound_system is not None}")
+            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled if self.sound_system else 'N/A'}")
+            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled if self.sound_system else 'N/A'}")
+
             # Start 2-minute security alarm
             if self.sound_system:
+                logger.info("🔊 Starting 2-minute security alarm")
                 self.sound_system.start_alarm(duration_sec=120)
+            else:
+                logger.warning("🔇 No sound system available for alarm")
             
             # Start recording for full duration
             if CCTV['recording_enabled']:
@@ -1672,6 +1753,48 @@ class AdvancedPersonTracker:
 
             track.alert_sent = True
             track.siren_played = True
+
+    def _trigger_unknown_person_alarm(self, track: PersonTrack, current_time: float):
+        """Trigger immediate alarm for unknown person"""
+        try:
+            logger.warning(f"🚨 IMMEDIATE ALARM for unknown person {track.track_id}")
+            print(f"🚨 SECURITY ALERT! Unknown person at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
+            print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
+
+            # Debug sound system before alarm
+            logger.info(f"🔊 Triggering immediate alarm for track {track.track_id}")
+            logger.info(f"  - sound_system available: {self.sound_system is not None}")
+            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled if self.sound_system else 'N/A'}")
+            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled if self.sound_system else 'N/A'}")
+            logger.info(f"  - sound_system.use_espeak_ng: {self.sound_system.use_espeak_ng if self.sound_system else 'N/A'}")
+
+            # Start 2-minute security alarm
+            if self.sound_system:
+                logger.info("🔊 Starting 2-minute security alarm for unknown person")
+                try:
+                    self.sound_system.start_alarm(duration_sec=120)
+                    logger.info("🔊 Alarm start command sent successfully")
+                except Exception as e:
+                    logger.error(f"❌ Error starting alarm: {e}")
+            else:
+                logger.warning("🔇 No sound system available for alarm")
+            
+            # Start recording for full duration
+            if CCTV['recording_enabled']:
+                track.recording_end_time = current_time + 120  # 2 minutes
+                if not track.is_recording:
+                    self._start_recording(track)
+
+            # Update hardware status
+            if self.hardware_manager:
+                self.hardware_manager.set_system_status('alert')
+                self.hardware_manager.play_alarm()
+
+            track.alert_sent = True
+            track.siren_played = True
+            
+        except Exception as e:
+            logger.error(f"Error triggering unknown person alarm: {e}")
     
     def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""

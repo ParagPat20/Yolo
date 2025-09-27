@@ -88,6 +88,9 @@ class CCTVSystem:
         
         # Play welcome message on boot
         self._play_welcome_message()
+        
+        # Test sound system
+        self._test_sound_system()
 
     def initialize_camera(self) -> bool:
         """Initialize camera with enhanced settings"""
@@ -307,6 +310,35 @@ class CCTVSystem:
                     
         except Exception as e:
             logger.error(f"Error playing welcome message: {e}")
+
+    def _test_sound_system(self):
+        """Test the sound system to ensure it's working"""
+        try:
+            logger.info("🔊 Testing sound system...")
+            
+            if hasattr(self.person_tracker, 'sound_system'):
+                sound_system = self.person_tracker.sound_system
+                logger.info(f"  - Sound system available: {sound_system is not None}")
+                logger.info(f"  - Sound enabled: {sound_system.sound_enabled}")
+                logger.info(f"  - Voice enabled: {sound_system.voice_enabled}")
+                logger.info(f"  - Use espeak-ng: {sound_system.use_espeak_ng}")
+                
+                # Test a simple beep
+                if sound_system.sound_enabled:
+                    logger.info("🔊 Testing beep...")
+                    sound_system._play_windows_beep(0)
+                    time.sleep(0.5)
+                
+                # Test voice
+                if sound_system.voice_enabled:
+                    logger.info("🗣️ Testing voice...")
+                    sound_system._speak_text(0, "Sound system test")
+                    time.sleep(1)
+            else:
+                logger.warning("🔇 No sound system found in person tracker")
+                
+        except Exception as e:
+            logger.error(f"Error testing sound system: {e}")
 
     def cleanup(self):
         """Cleanup system resources"""
