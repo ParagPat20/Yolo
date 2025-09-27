@@ -115,7 +115,6 @@ cat > start_cctv.sh << 'EOF'
 #!/bin/bash
 echo "Starting Raspberry Pi CCTV System..."
 cd "$(dirname "$0")"
-source venv/bin/activate  # If using virtual environment
 python3 src/cctv_system.py
 EOF
 
