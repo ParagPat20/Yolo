@@ -102,6 +102,8 @@ class SoundSystem:
         # Initialize persistent voice if using Piper
         if self.tts_system == 'piper':
             self._initialize_piper_voice()
+            # Ensure model is fully ready
+            self._ensure_piper_ready()
         
         if self.is_enabled:
             lang_name = "Gujarati" if self.language == 'gu' else "English"
@@ -212,22 +214,39 @@ class SoundSystem:
                 logger.warning(f"⚠️ Piper model not found: {model_path}")
                 return
             
-            # Load Piper voice model once
+            # Try to import Piper (if available as Python package)
             try:
                 from piper import PiperVoice
                 logger.info("🔊 Loading Piper TTS model...")
                 self.piper_voice = PiperVoice.load(model_path)
-                logger.info(f"✅ Piper TTS model loaded successfully from {model_path}")
+                
+                # Pre-warm the model with a test synthesis to ensure it's fully loaded
+                logger.info("🔊 Pre-warming Piper model for faster speech...")
+                test_audio = self.piper_voice.synthesize("Test", length_scale=1.0, noise_scale=0.667)
+                logger.info("✅ Piper model pre-warmed and ready for immediate use")
+                
             except ImportError:
-                logger.info("🔊 Using command-line Piper (piper library not available)")
+                logger.info("🔊 Using command-line Piper (no persistent voice)")
                 self.piper_voice = None
             except Exception as e:
-                logger.warning(f"⚠️ Failed to load Piper TTS model: {e}")
+                logger.warning(f"⚠️ Failed to initialize persistent Piper voice: {e}")
                 self.piper_voice = None
                 
         except Exception as e:
             logger.error(f"❌ Error initializing Piper voice: {e}")
             self.piper_voice = None
+    
+    def _ensure_piper_ready(self):
+        """Ensure Piper model is fully ready for immediate use"""
+        if self.piper_voice is not None:
+            try:
+                # Perform a quick test synthesis to ensure everything is loaded
+                logger.info("🔊 Finalizing Piper model readiness...")
+                test_result = self.piper_voice.synthesize("Ready", length_scale=1.0, noise_scale=0.667)
+                logger.info("✅ Piper model is fully ready for immediate speech")
+            except Exception as e:
+                logger.warning(f"⚠️ Piper model readiness check failed: {e}")
+                # Model might still work, just log the warning
     
     def is_alarm_playing(self):
         """Check if alarm is currently playing"""
@@ -363,19 +382,25 @@ class SoundSystem:
         try:
             logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
             
-            # Generate audio using persistent voice (Piper doesn't support parameters in synthesize)
-            audio_data = self.piper_voice.synthesize(text)
+            # Generate audio using persistent voice (pre-loaded model)
+            audio_data = self.piper_voice.synthesize(text, length_scale=length_scale, noise_scale=noise_scale)
             
-            # Play audio using aplay with model's sample rate
-            sample_rate = self.piper_voice.config.sample_rate
+            # Get audio configuration
+            piper_config = SOUND_SYSTEM.get('piper', {})
+            sample_rate = piper_config.get('sample_rate', 22050)
+            channels = piper_config.get('channels', 1)
+            audio_format = piper_config.get('format', 'S16_LE')
             
-            # Use aplay to play the audio data
-            cmd = ['aplay', '-r', str(sample_rate), '-f', 'S16_LE', '-c', '1', '-']
+            # Use aplay to play the audio data (non-blocking)
+            cmd = ['aplay', '-r', str(sample_rate), '-f', audio_format, '-c', str(channels), '-']
             
-            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.current_process.communicate(input=audio_data)
+            # Start aplay process and feed audio data
+            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=None, stderr=None)
+            self.current_process.stdin.write(audio_data)
+            self.current_process.stdin.close()
             
-            logger.info(f"🔊 Spoke with persistent Piper: {text[:50]}...")
+            # Don't wait for completion - let it play in background
+            logger.info(f"🔊 Started persistent Piper speech: {text[:50]}...")
                 
         except Exception as e:
             logger.error(f"❌ Error with persistent Piper: {e}")
