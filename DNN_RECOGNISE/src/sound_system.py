@@ -213,14 +213,16 @@ class SoundSystem:
                 return
             
             try:
-                from piper.voice import PiperVoice
+                # You'll need to import AudioChunk at the top of your file
+                from piper.voice import PiperVoice, AudioChunk
                 logger.info("🔊 Loading Piper TTS model...")
                 self.piper_voice = PiperVoice.load(model_path)
                 
-                # Pre-warm the model by synthesizing AND consuming the audio data
+                # Pre-warm the model by synthesizing and consuming the audio data
                 logger.info("🔊 Pre-warming Piper model for faster speech...")
                 test_generator = self.piper_voice.synthesize("Ready")
-                _ = b"".join(list(test_generator)) # This consumes the generator
+                # --- THE FIX IS HERE ---
+                _ = b"".join([chunk.audio for chunk in test_generator])
                 logger.info("✅ Piper model pre-warmed and ready for immediate use")
                 
             except ImportError:
@@ -233,7 +235,7 @@ class SoundSystem:
         except Exception as e:
             logger.error(f"❌ Error initializing Piper voice: {e}")
             self.piper_voice = None
-    
+            
     def _ensure_piper_ready(self):
         """Ensure Piper model is fully ready for immediate use"""
         if self.piper_voice is not None:
@@ -374,7 +376,42 @@ class SoundSystem:
                 next_text = self.sound_queue.pop(0)
                 logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
                 self._speak_immediately(next_text)
+    
+    def _speak_with_persistent_piper(self, text: str, noise_scale: float, length_scale: float):
+        """Speak using persistent Piper voice (fastest method)"""
+        try:
+            logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
+            
+            # Synthesize and get the generator with speed/noise controls
+            audio_generator = self.piper_voice.synthesize(
+                text,
+                length_scale=length_scale,
+                noise_scale=noise_scale
+            )
+            
+            # --- THE FIX IS HERE ---
+            audio_data = b"".join([chunk.audio for chunk in audio_generator])
+            
+            # Get audio configuration from the loaded voice model for accuracy
+            sample_rate = self.piper_voice.config.sample_rate
+            channels = self.piper_voice.config.num_channels
+            audio_format = 'S16_LE' # Piper uses 16-bit signed little-endian
 
+            # Use aplay to play the audio data
+            cmd = ['aplay', '-r', str(sample_rate), '-f', audio_format, '-c', str(channels), '-']
+            
+            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.current_process.communicate(input=audio_data)
+            
+            logger.info(f"🔊 Finished persistent Piper speech: {text[:50]}...")
+                
+        except Exception as e:
+            logger.error(f"❌ Error with persistent Piper: {e}")
+            # Fallback to command-line method
+            piper_config = SOUND_SYSTEM.get('piper', {})
+            model_path = piper_config.get('models', {}).get(self.language, piper_config.get('model_path', ''))
+            self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
+        
     def _speak_with_piper_command(self, text: str, model_path: str, noise_scale: float, length_scale: float):
         """Speak using command-line Piper (fallback method)"""
         try:
