@@ -222,7 +222,7 @@ class SoundSystem:
                 
                 # Pre-warm the model with a test synthesis to ensure it's fully loaded
                 logger.info("🔊 Pre-warming Piper model for faster speech...")
-                test_audio = self.piper_voice.synthesize("Test", length_scale=1.0, noise_scale=0.667)
+                test_audio = self.piper_voice.synthesize("Test")
                 logger.info("✅ Piper model pre-warmed and ready for immediate use")
                 
             except ImportError:
@@ -242,7 +242,7 @@ class SoundSystem:
             try:
                 # Perform a quick test synthesis to ensure everything is loaded
                 logger.info("🔊 Finalizing Piper model readiness...")
-                test_result = self.piper_voice.synthesize("Ready", length_scale=1.0, noise_scale=0.667)
+                test_result = self.piper_voice.synthesize("Ready")
                 logger.info("✅ Piper model is fully ready for immediate speech")
             except Exception as e:
                 logger.warning(f"⚠️ Piper model readiness check failed: {e}")
@@ -383,7 +383,8 @@ class SoundSystem:
             logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
             
             # Generate audio using persistent voice (pre-loaded model)
-            audio_data = self.piper_voice.synthesize(text, length_scale=length_scale, noise_scale=noise_scale)
+            # Note: Current Piper API doesn't support length_scale/noise_scale in synthesize()
+            audio_data = self.piper_voice.synthesize(text)
             
             # Get audio configuration
             piper_config = SOUND_SYSTEM.get('piper', {})

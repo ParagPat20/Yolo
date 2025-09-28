@@ -173,9 +173,9 @@ SOUND_SYSTEM = {
             'en': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # English model
             'gu': '/usr/local/share/piper-voices/gu_IN-cmu-indic_medium.onnx',  # Gujarati model (if available)
         },
-        'speed': 1.0,  # Speech speed multiplier (0.1-3.0) - not used in Piper
-        'noise': 0.667,  # Noise scale (0.0-1.0) - maps to --noise-scale
-        'length_penalty': 1.0,  # Length scale (0.0-2.0) - maps to --length-scale
+        'speed': 1.0,  # Speech speed multiplier (0.1-3.0) - not used in persistent Piper
+        'noise': 0.667,  # Noise scale (0.0-1.0) - only used in command-line Piper
+        'length_penalty': 1.0,  # Length scale (0.0-2.0) - only used in command-line Piper
         'use_aplay': True,  # Use aplay for audio output (Linux)
         'sample_rate': 22050,  # Audio sample rate
         'channels': 1,  # Audio channels (mono)
