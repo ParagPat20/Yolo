@@ -212,17 +212,17 @@ class SoundSystem:
                 logger.warning(f"⚠️ Piper model not found: {model_path}")
                 return
             
-            # Try to import Piper (if available as Python package)
+            # Load Piper voice model once
             try:
                 from piper import PiperVoice
-                logger.info("🔊 Initializing persistent Piper voice...")
+                logger.info("🔊 Loading Piper TTS model...")
                 self.piper_voice = PiperVoice.load(model_path)
-                logger.info("✅ Persistent Piper voice initialized")
+                logger.info(f"✅ Piper TTS model loaded successfully from {model_path}")
             except ImportError:
-                logger.info("🔊 Using command-line Piper (no persistent voice)")
+                logger.info("🔊 Using command-line Piper (piper library not available)")
                 self.piper_voice = None
             except Exception as e:
-                logger.warning(f"⚠️ Failed to initialize persistent Piper voice: {e}")
+                logger.warning(f"⚠️ Failed to load Piper TTS model: {e}")
                 self.piper_voice = None
                 
         except Exception as e:
@@ -340,9 +340,12 @@ class SoundSystem:
             noise_scale = piper_config.get('noise', 0.667)
             length_scale = piper_config.get('length_penalty', 1.0)
             
-            # Use command-line Piper (more reliable than persistent voice)
-            # TODO: Fix persistent Piper AudioChunk handling
-            self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
+            # Try to use persistent voice first (much faster)
+            if self.piper_voice is not None:
+                self._speak_with_persistent_piper(text, noise_scale, length_scale)
+            else:
+                # Fallback to command-line Piper
+                self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
             
         except Exception as e:
             logger.error(f"❌ Error with Piper: {e}")
@@ -360,51 +363,19 @@ class SoundSystem:
         try:
             logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
             
-            # Generate audio using persistent voice (Piper doesn't support these parameters in synthesize)
-            audio_generator = self.piper_voice.synthesize(text)
+            # Generate audio using persistent voice
+            audio_data = self.piper_voice.synthesize(text, length_scale=length_scale, noise_scale=noise_scale)
             
-            # Convert generator to bytes by extracting data from each AudioChunk
-            # Based on Piper documentation, AudioChunk should have audio data
-            audio_chunks = []
-            for chunk in audio_generator:
-                # Try to get the raw audio data
-                try:
-                    # Most common attribute names for audio data
-                    if hasattr(chunk, 'audio'):
-                        audio_chunks.append(chunk.audio)
-                    elif hasattr(chunk, 'data'):
-                        audio_chunks.append(chunk.data)
-                    elif hasattr(chunk, 'samples'):
-                        audio_chunks.append(chunk.samples)
-                    else:
-                        # If chunk is already bytes-like, use it directly
-                        audio_chunks.append(bytes(chunk))
-                except Exception as e:
-                    logger.warning(f"Could not extract audio from chunk: {e}")
-                    continue
-            
-            audio_data = b''.join(audio_chunks)
-            
-            # Play audio using aplay
-            piper_config = SOUND_SYSTEM.get('piper', {})
-            sample_rate = piper_config.get('sample_rate', 22050)
-            channels = piper_config.get('channels', 1)
-            audio_format = piper_config.get('format', 'S16_LE')
+            # Play audio using aplay with model's sample rate
+            sample_rate = self.piper_voice.config.sample_rate
             
             # Use aplay to play the audio data
-            cmd = ['aplay', '-r', str(sample_rate), '-f', audio_format, '-c', str(channels), '-']
+            cmd = ['aplay', '-r', str(sample_rate), '-f', 'S16_LE', '-c', '1', '-']
             
-            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=None, stderr=None)
-            self.current_process.stdin.write(audio_data)
-            self.current_process.stdin.close()
+            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.current_process.communicate(input=audio_data)
             
-            # Wait for completion
-            return_code = self.current_process.wait()
-            
-            if return_code == 0:
-                logger.info(f"🔊 Spoke with persistent Piper: {text[:50]}...")
-            else:
-                logger.error(f"❌ Persistent Piper failed with return code: {return_code}")
+            logger.info(f"🔊 Spoke with persistent Piper: {text[:50]}...")
                 
         except Exception as e:
             logger.error(f"❌ Error with persistent Piper: {e}")
