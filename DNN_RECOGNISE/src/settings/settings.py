@@ -164,15 +164,28 @@ AUDIO = {
 SOUND_SYSTEM = {
     'enabled': True,  # Enable/disable sound system
     'language': 'en',  # Default language: 'en' for English, 'gu' for Gujarati
+    'primary_tts': 'piper',  # Primary TTS system: 'piper', 'espeak', 'pyttsx3', 'win32'
+    'fallback_chain': ['espeak', 'pyttsx3', 'win32', 'winsound'],  # Fallback order
+    'piper': {
+        'enabled': True,  # Enable Piper TTS
+        'model_path': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # Default model path
+        'models': {
+            'en': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # English model
+            'gu': '/usr/local/share/piper-voices/gu_IN-cmu-indic_medium.onnx',  # Gujarati model (if available)
+        },
+        'speed': 1.0,  # Speech speed multiplier (0.1-3.0)
+        'noise': 0.667,  # Noise level (0.0-1.0)
+        'length_penalty': 1.0,  # Length penalty (0.0-2.0)
+    },
     'voice_parameters': {
         'gujarati': {
-            'speed': 163,      # Speech speed (50-300)
+            'speed': 163,      # Speech speed (50-300) - for espeak-ng
             'pitch': 55,       # Voice pitch (0-99, female cute girl voice)
             'volume': 100,     # Volume (0-200)
             'amplitude': 100   # Amplitude (0-200)
         },
         'english': {
-            'speed': 163,      # Speech speed (50-300)
+            'speed': 163,      # Speech speed (50-300) - for espeak-ng
             'pitch': 55,       # Voice pitch (0-99, female voice)
             'volume': 100,     # Volume (0-200)
             'amplitude': 100   # Amplitude (0-200)

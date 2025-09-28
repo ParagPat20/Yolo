@@ -10,6 +10,7 @@ import threading
 import time
 import os
 import platform
+import shlex
 from typing import Optional
 
 # Import settings
@@ -67,6 +68,7 @@ class SoundSystem:
         self.sound_queue = []
         self.current_process: Optional[subprocess.Popen] = None
         self.use_winsound = False
+        self.tts_system = None  # Current TTS system being used
         
         # Use language from parameter or settings
         if language is None:
@@ -92,35 +94,78 @@ class SoundSystem:
             'amplitude': voice_config.get('amplitude', 100)
         }
         
-        # Check if espeak-ng is available
-        self._check_espeak_availability()
-        
-        # If espeak-ng not available, check for Windows speech fallbacks
-        if (not self.is_enabled and 
-            platform.system() == 'Windows' and 
-            SOUND_SYSTEM.get('windows_speech_fallback', True)):
-            
-            # Try pyttsx3 first (best option)
-            if PYTTSX3_AVAILABLE:
-                logger.info("🔊 espeak-ng not available, using pyttsx3 on Windows")
-                self.is_enabled = True
-                self.use_pyttsx3 = True
-            # Try Windows SAPI (win32com.client)
-            elif WIN32_AVAILABLE:
-                logger.info("🔊 espeak-ng not available, using Windows SAPI on Windows")
-                self.is_enabled = True
-                self.use_win32 = True
-            # Fallback to winsound beeps
-            elif WINSOUND_AVAILABLE:
-                logger.info("🔊 espeak-ng not available, using winsound beeps on Windows")
-                self.is_enabled = True
-                self.use_winsound = True
+        # Initialize TTS system with fallback chain
+        self._initialize_tts_system()
         
         if self.is_enabled:
             lang_name = "Gujarati" if self.language == 'gu' else "English"
-            logger.info(f"🔊 Sound System initialized with {lang_name} female voice")
+            logger.info(f"🔊 Sound System initialized with {lang_name} female voice using {self.tts_system}")
         else:
             logger.warning("🔇 Sound System disabled - no audio available")
+    
+    def _initialize_tts_system(self):
+        """Initialize TTS system with fallback chain"""
+        primary_tts = SOUND_SYSTEM.get('primary_tts', 'piper')
+        fallback_chain = SOUND_SYSTEM.get('fallback_chain', ['espeak', 'pyttsx3', 'win32', 'winsound'])
+        
+        # Try primary TTS system first
+        if primary_tts == 'piper' and self._check_piper_availability():
+            self.tts_system = 'piper'
+            self.is_enabled = True
+            logger.info("🔊 Using Piper TTS as primary system")
+            return
+        
+        # Try fallback chain
+        for tts_system in fallback_chain:
+            if tts_system == 'espeak' and self._check_espeak_availability():
+                self.tts_system = 'espeak'
+                self.is_enabled = True
+                logger.info("🔊 Using espeak-ng as fallback system")
+                return
+            elif tts_system == 'pyttsx3' and self._check_pyttsx3_availability():
+                self.tts_system = 'pyttsx3'
+                self.is_enabled = True
+                logger.info("🔊 Using pyttsx3 as fallback system")
+                return
+            elif tts_system == 'win32' and self._check_win32_availability():
+                self.tts_system = 'win32'
+                self.is_enabled = True
+                logger.info("🔊 Using Windows SAPI as fallback system")
+                return
+            elif tts_system == 'winsound' and self._check_winsound_availability():
+                self.tts_system = 'winsound'
+                self.is_enabled = True
+                logger.info("🔊 Using winsound as fallback system")
+                return
+        
+        # No TTS system available
+        self.tts_system = None
+        self.is_enabled = False
+        logger.warning("🔇 No TTS system available")
+    
+    def _check_piper_availability(self):
+        """Check if Piper TTS is available"""
+        try:
+            # Check if piper command exists
+            result = subprocess.run(['piper', '--help'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                # Check if model file exists
+                piper_config = SOUND_SYSTEM.get('piper', {})
+                model_path = piper_config.get('models', {}).get(self.language, 
+                                                               piper_config.get('model_path', ''))
+                if os.path.exists(model_path):
+                    logger.info("✅ Piper TTS is available with model")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Piper model not found: {model_path}")
+                    return False
+            else:
+                logger.warning("⚠️ Piper command not found")
+                return False
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            logger.warning("⚠️ Piper TTS not available")
+            return False
     
     def _check_espeak_availability(self):
         """Check if espeak-ng is installed and available"""
@@ -129,13 +174,25 @@ class SoundSystem:
                                   capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 logger.info("✅ espeak-ng is available")
-                self.is_enabled = True
+                return True
             else:
-                logger.warning("⚠️ espeak-ng not found, sound disabled")
-                self.is_enabled = False
+                logger.warning("⚠️ espeak-ng not found")
+                return False
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-            logger.warning("⚠️ espeak-ng not available, sound disabled")
-            self.is_enabled = False
+            logger.warning("⚠️ espeak-ng not available")
+            return False
+    
+    def _check_pyttsx3_availability(self):
+        """Check if pyttsx3 is available"""
+        return PYTTSX3_AVAILABLE and platform.system() == 'Windows'
+    
+    def _check_win32_availability(self):
+        """Check if Windows SAPI is available"""
+        return WIN32_AVAILABLE and platform.system() == 'Windows'
+    
+    def _check_winsound_availability(self):
+        """Check if winsound is available"""
+        return WINSOUND_AVAILABLE and platform.system() == 'Windows'
     
     def _build_espeak_command(self, text: str) -> list:
         """Build espeak-ng command with parameters"""
@@ -186,81 +243,92 @@ class SoundSystem:
         self._speak_immediately(text)
     
     def _speak_immediately(self, text: str):
-        """Speak text immediately"""
+        """Speak text immediately using the selected TTS system"""
         try:
             # Stop any current speech
             self.stop_speaking()
             
             logger.info(f"🔊 Speaking: {text}")
             
-            # Use Windows speech fallbacks if espeak-ng not available
-            if hasattr(self, 'use_pyttsx3') and self.use_pyttsx3:
+            # Use the selected TTS system
+            if self.tts_system == 'piper':
+                self._speak_with_piper(text)
+            elif self.tts_system == 'espeak':
+                self._speak_with_espeak(text)
+            elif self.tts_system == 'pyttsx3':
                 self._speak_with_pyttsx3(text)
-                return
-            elif hasattr(self, 'use_win32') and self.use_win32:
+            elif self.tts_system == 'win32':
                 self._speak_with_win32(text)
-                return
-            elif hasattr(self, 'use_winsound') and self.use_winsound:
+            elif self.tts_system == 'winsound':
                 self._speak_with_winsound(text)
-                return
+            else:
+                logger.warning("🔇 No TTS system available")
+                
+        except Exception as e:
+            logger.error(f"❌ Error speaking: {e}")
+            self.is_speaking = False
+    
+    def _speak_with_piper(self, text: str):
+        """Speak using Piper TTS"""
+        try:
+            self.is_speaking = True
             
+            # Get Piper configuration
+            piper_config = SOUND_SYSTEM.get('piper', {})
+            model_path = piper_config.get('models', {}).get(self.language, 
+                                                          piper_config.get('model_path', ''))
+            speed = piper_config.get('speed', 1.0)
+            noise = piper_config.get('noise', 0.667)
+            length_penalty = piper_config.get('length_penalty', 1.0)
+            
+            # Escape text for shell safety
+            safe_text = shlex.quote(text)
+            
+            # Build Piper command
+            cmd = [
+                'bash', '-c',
+                f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty}'
+            ]
+            
+            # Execute command
+            self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.current_process.wait()
+            
+            logger.info(f"🔊 Spoke with Piper: {text[:50]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ Error with Piper: {e}")
+        finally:
+            self.is_speaking = False
+            
+            # Process next in queue
+            if self.sound_queue:
+                next_text = self.sound_queue.pop(0)
+                logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
+                self._speak_immediately(next_text)
+    
+    def _speak_with_espeak(self, text: str):
+        """Speak using espeak-ng"""
+        try:
             # Build command
             cmd = self._build_espeak_command(text)
             
-            # Start speaking in a separate thread
-            def speak_thread():
-                try:
-                    self.is_speaking = True
-                    import platform
-                    
-                    if platform.system() == 'Windows':
-                        # Windows: Generate WAV file and play with Windows Media Player
-                        espeak_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        espeak_process.wait()
-                        
-                        # Play the generated WAV file
-                        if os.path.exists('temp_audio.wav'):
-                            play_process = subprocess.Popen(['powershell', '-c', 
-                                '(New-Object Media.SoundPlayer "temp_audio.wav").PlaySync()'], 
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            self.current_process = play_process
-                            play_process.wait()
-                            
-                            # Clean up temp file
-                            try:
-                                os.remove('temp_audio.wav')
-                            except:
-                                pass
-                    else:
-                        # Linux/Mac: Use aplay to play the audio output from espeak-ng
-                        espeak_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        aplay_process = subprocess.Popen(['aplay'], stdin=espeak_process.stdout, stderr=subprocess.PIPE)
-                        
-                        self.current_process = aplay_process
-                        
-                        # Wait for completion
-                        aplay_process.wait()
-                        espeak_process.wait()
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error in speech thread: {e}")
-                finally:
-                    self.is_speaking = False
-                    self.current_process = None
-                    
-                    # Process next in queue
-                    if self.sound_queue:
-                        next_text = self.sound_queue.pop(0)
-                        logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
-                        self._speak_immediately(next_text)
+            # Execute command
+            self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.current_process.wait()
             
-            # Start speech thread
-            speech_thread = threading.Thread(target=speak_thread, daemon=True)
-            speech_thread.start()
+            logger.info(f"🔊 Spoke with espeak-ng: {text[:50]}...")
             
         except Exception as e:
-            logger.error(f"❌ Error starting speech: {e}")
+            logger.error(f"❌ Error with espeak-ng: {e}")
+        finally:
             self.is_speaking = False
+            
+            # Process next in queue
+            if self.sound_queue:
+                next_text = self.sound_queue.pop(0)
+                logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
+                self._speak_immediately(next_text)
 
     def _speak_with_pyttsx3(self, text: str):
         """Speak using pyttsx3 (best Windows TTS option)"""
@@ -292,7 +360,7 @@ class SoundSystem:
                     if 'female' in voice.name.lower() or 'zira' in voice.name.lower():
                         engine.setProperty('voice', voice.id)
                         break
-                engine.setProperty('rate', 150)  # Speed
+                engine.setProperty('rate', 163)  # Speed
                 engine.setProperty('volume', 1.0)  # Volume
             
             # Speak the text with timeout protection
