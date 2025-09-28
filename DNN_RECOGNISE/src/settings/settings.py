@@ -155,7 +155,9 @@ AUDIO = {
     'verification_beep_path': 'sounds/verification_beep.mp3',
     'use_mp3_sounds': True,  # Enable MP3 sound playback
     'mp3_player_linux': 'mpg123',  # MP3 player for Linux
-    'mp3_player_windows': 'powershell'  # Fallback for Windows
+    'mp3_player_windows': 'powershell',  # Fallback for Windows
+    'alarm_duration_minutes': 2,  # Duration to play alarm sound (in minutes)
+    'alarm_loop_interval': 5  # Seconds between alarm sound loops
 }
 
 # Sound System Settings

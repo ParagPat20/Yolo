@@ -1454,6 +1454,7 @@ class AdvancedPersonTracker:
                 try:
                     from sound_player import play_alarm
                     play_alarm()
+                    logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Alarm sound not available: {e}")
             
@@ -1492,6 +1493,7 @@ class AdvancedPersonTracker:
                 try:
                     from sound_player import play_alarm
                     play_alarm()
+                    logger.info(f"🚨 Extended alarm started for verified unknown person {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Alarm sound not available: {e}")
             
