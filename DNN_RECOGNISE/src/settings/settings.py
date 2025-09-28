@@ -176,6 +176,10 @@ SOUND_SYSTEM = {
         'speed': 1.0,  # Speech speed multiplier (0.1-3.0)
         'noise': 0.667,  # Noise level (0.0-1.0)
         'length_penalty': 1.0,  # Length penalty (0.0-2.0)
+        'use_aplay': True,  # Use aplay for audio output (Linux)
+        'sample_rate': 22050,  # Audio sample rate
+        'channels': 1,  # Audio channels (mono)
+        'format': 'S16_LE',  # Audio format
     },
     'voice_parameters': {
         'gujarati': {

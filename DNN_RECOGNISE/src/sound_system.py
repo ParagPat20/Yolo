@@ -269,7 +269,7 @@ class SoundSystem:
             self.is_speaking = False
     
     def _speak_with_piper(self, text: str):
-        """Speak using Piper TTS"""
+        """Speak using Piper TTS with audio output"""
         try:
             self.is_speaking = True
             
@@ -284,11 +284,24 @@ class SoundSystem:
             # Escape text for shell safety
             safe_text = shlex.quote(text)
             
-            # Build Piper command
-            cmd = [
-                'bash', '-c',
-                f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty}'
-            ]
+            # Get audio configuration
+            use_aplay = piper_config.get('use_aplay', True)
+            sample_rate = piper_config.get('sample_rate', 22050)
+            channels = piper_config.get('channels', 1)
+            audio_format = piper_config.get('format', 'S16_LE')
+            
+            # Build Piper command with audio output
+            if use_aplay:
+                cmd = [
+                    'bash', '-c',
+                    f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty} --output-raw | aplay -r {sample_rate} -f {audio_format} -c {channels} -'
+                ]
+            else:
+                # Fallback to direct piper output
+                cmd = [
+                    'bash', '-c',
+                    f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty}'
+                ]
             
             # Execute command
             self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
