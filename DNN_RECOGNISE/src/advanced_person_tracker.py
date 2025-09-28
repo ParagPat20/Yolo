@@ -51,16 +51,7 @@ except ImportError:
     HARDWARE_AVAILABLE = False
     logger.warning("🔧 Hardware interface not available")
 
-# Try to import sound system
-try:
-    from sound_system import get_sound_system, get_messages
-    SOUND_AVAILABLE = True
-    logger.info("🔊 Sound system available")
-except ImportError:
-    SOUND_AVAILABLE = False
-    logger.warning("🔊 Sound system not available")
-
-# Try to import sound player for MP3 sounds
+# Try to import sound player for audio files
 try:
     from sound_player import get_sound_player
     SOUND_PLAYER_AVAILABLE = True
@@ -719,20 +710,16 @@ class AdvancedPersonTracker:
         # Initialize hardware interface
         self.hardware_manager = get_hardware_manager() if HARDWARE_AVAILABLE else None
 
-        # Initialize sound system (will be overridden by CCTV system if available)
-        if SOUND_AVAILABLE:
+        # Initialize sound player for audio files
+        if SOUND_PLAYER_AVAILABLE:
             try:
-                # Use settings-based initialization (language from settings)
-                self.sound_system = get_sound_system()  # Uses settings default language
-                self.sound_messages = get_messages()    # Uses settings default language
-                logger.info("🔊 Sound system initialized with settings configuration")
+                self.sound_player = get_sound_player()
+                logger.info("🔊 Sound player initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize sound system: {e}")
-                self.sound_system = None
-                self.sound_messages = None
+                logger.error(f"Failed to initialize sound player: {e}")
+                self.sound_player = None
         else:
-            self.sound_system = None
-            self.sound_messages = None
+            self.sound_player = None
         
         # Reference to parent CCTV system for background sound
         self.cctv_system = None
@@ -1380,19 +1367,9 @@ class AdvancedPersonTracker:
         try:
             logger.info(f"🔍 Verification request for track {track.track_id}")
             
-            if self.cctv_system:
-                self.cctv_system.play_background_sound('face_verification_request')
-            elif self.sound_messages:
-                logger.info("🔍 Using sound system for verification request")
-                self.sound_messages.face_verification_request()
-            
-            # Play verification beep
-            if SOUND_PLAYER_AVAILABLE:
-                try:
-                    from sound_player import play_verification_beep
-                    play_verification_beep()
-                except Exception as e:
-                    logger.warning(f"Verification beep not available: {e}")
+            # Play verification request audio file
+            if self.sound_player:
+                self.sound_player.play_verification_request()
             
             if self.hardware_manager:
                 logger.info("🔍 Using hardware manager for verification request")
@@ -1405,19 +1382,9 @@ class AdvancedPersonTracker:
     def _play_verification_reminder(self, track: PersonTrack, reminder_count: int):
         """Play verification reminder with progressive urgency"""
         try:
-            if self.cctv_system:
-                self.cctv_system.play_background_sound('face_verification_reminder', count=reminder_count)
-            elif self.sound_messages:
-                logger.info("🔍 Using sound system for verification reminder")
-                self.sound_messages.face_verification_reminder(reminder_count)
-            
-            # Play verification beep for reminders
-            if SOUND_PLAYER_AVAILABLE:
-                try:
-                    from sound_player import play_verification_beep
-                    play_verification_beep()
-                except Exception as e:
-                    logger.warning(f"Verification beep not available: {e}")
+            # Play verification reminder audio file
+            if self.sound_player:
+                self.sound_player.play_verification_reminder(reminder_count)
             
             if self.hardware_manager:
                 self.hardware_manager.request_verification()
@@ -1444,26 +1411,17 @@ class AdvancedPersonTracker:
 
             # Check if alarm is already playing
             alarm_already_playing = False
-            if self.sound_system and self.sound_system.is_alarm_playing():
+            if self.sound_player and self.sound_player.is_alarm_playing():
                 alarm_already_playing = True
                 logger.info("🚨 Alarm already playing - skipping new alarm")
             
             # Play alarm sound only if not already playing
-            if not alarm_already_playing:
-                if self.cctv_system:
-                    self.cctv_system.play_priority_sound('unknown_person_alert')
-                elif self.sound_messages:
-                    logger.info(f"🔊 Playing sound system alarm for unknown person {track.track_id}")
-                    self.sound_messages.unknown_person_alert()
-                
-                # Play MP3 alarm sound
-                if SOUND_PLAYER_AVAILABLE:
-                    try:
-                        from sound_player import play_alarm
-                        play_alarm(self.sound_system)  # Pass sound system for alarm management
-                        logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
-                    except Exception as e:
-                        logger.warning(f"Alarm sound not available: {e}")
+            if not alarm_already_playing and self.sound_player:
+                try:
+                    self.sound_player.play_alarm()
+                    logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
+                except Exception as e:
+                    logger.warning(f"Alarm sound not available: {e}")
             else:
                 logger.info("🚨 Alarm already active - not starting new alarm")
             
@@ -1499,15 +1457,14 @@ class AdvancedPersonTracker:
             
             # Check if alarm is already playing
             alarm_already_playing = False
-            if self.sound_system and self.sound_system.is_alarm_playing():
+            if self.sound_player and self.sound_player.is_alarm_playing():
                 alarm_already_playing = True
                 logger.info("🚨 Alarm already playing - skipping new alarm")
             
-            # Play MP3 alarm sound only if not already playing
-            if not alarm_already_playing and SOUND_PLAYER_AVAILABLE:
+            # Play alarm sound only if not already playing
+            if not alarm_already_playing and self.sound_player:
                 try:
-                    from sound_player import play_alarm
-                    play_alarm(self.sound_system)  # Pass sound system for alarm management
+                    self.sound_player.play_alarm()
                     logger.info(f"🚨 Extended alarm started for verified unknown person {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Alarm sound not available: {e}")
@@ -1648,28 +1605,18 @@ class AdvancedPersonTracker:
         logger.info(f"👋 Greeting {person_name}: {greeting}")
 
         # Stop any ongoing alarm when known person is detected
-        if self.sound_system and self.sound_system.is_alarm_playing():
+        if self.sound_player and self.sound_player.is_alarm_playing():
             logger.info("🔇 Stopping alarm - known person detected")
-            self.sound_system.stop_alarm()
-        
-        # Also stop sound player alarm if available
-        if hasattr(self, 'sound_player') and self.sound_player:
-            if self.sound_player.is_alarm_active():
-                logger.info("🔇 Stopping sound player alarm - known person detected")
-                self.sound_player.stop_alarm()
+            self.sound_player.stop_alarm()
 
-        # Use sound system for greeting if available
-        if self.cctv_system:
-            # Play both time-based greeting and welcome message with priority
-            self.cctv_system.play_priority_sound('time_based_greeting')
-            self.cctv_system.play_priority_sound('known_person_greeting', name=person_name)
-        elif self.sound_messages:
+        # Play greeting audio files
+        if self.sound_player:
             try:
                 # Play both time-based greeting and welcome message
-                self.sound_messages.time_based_greeting()
-                self.sound_messages.known_person_greeting(person_name)
+                self.sound_player.play_time_based_greeting()
+                self.sound_player.play_known_person_greeting(person_name)
             except Exception as e:
-                logger.warning(f"Sound greeting not available: {e}")
+                logger.warning(f"Greeting audio not available: {e}")
         elif self.hardware_manager:
             try:
                 self.hardware_manager.greet_person(person_name)
@@ -1691,14 +1638,12 @@ class AdvancedPersonTracker:
 
         logger.info(f"🎉 Welcoming back {person_name}")
 
-        # Use sound system for welcome message if available
-        if self.cctv_system:
-            self.cctv_system.play_background_sound('welcome_back', name=person_name)
-        elif self.sound_messages:
+        # Play welcome back audio file
+        if self.sound_player:
             try:
-                self.sound_messages.welcome_back(person_name)
+                self.sound_player.play_welcome_back(person_name)
             except Exception as e:
-                logger.warning(f"Sound welcome not available: {e}")
+                logger.warning(f"Welcome back audio not available: {e}")
         elif self.hardware_manager:
             try:
                 self.hardware_manager.welcome_back(person_name)

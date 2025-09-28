@@ -160,45 +160,20 @@ AUDIO = {
     'alarm_loop_interval': 5  # Seconds between alarm sound loops
 }
 
-# Sound System Settings
+# Sound System Settings - WAV File Generation
 SOUND_SYSTEM = {
     'enabled': True,  # Enable/disable sound system
     'language': 'en',  # Default language: 'en' for English, 'gu' for Gujarati
-    'primary_tts': 'piper',  # Primary TTS system: 'piper', 'espeak', 'pyttsx3', 'win32'
-    'fallback_chain': ['espeak', 'pyttsx3', 'win32', 'winsound'],  # Fallback order
+    'wav_files_dir': 'sounds/wav',  # Directory for generated WAV files
     'piper': {
-        'enabled': True,  # Enable Piper TTS
         'model_path': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # Default model path
         'models': {
             'en': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # English model
             'gu': '/usr/local/share/piper-voices/gu_IN-cmu-indic_medium.onnx',  # Gujarati model (if available)
         },
-        'speed': 1.0,  # Speech speed multiplier (0.1-3.0) - not used in persistent Piper
-        'noise': 0.667,  # Noise scale (0.0-1.0) - only used in command-line Piper
-        'length_penalty': 1.0,  # Length scale (0.0-2.0) - only used in command-line Piper
-        'use_aplay': True,  # Use aplay for audio output (Linux)
-        'sample_rate': 22050,  # Audio sample rate
-        'channels': 1,  # Audio channels (mono)
-        'format': 'S16_LE',  # Audio format
-    },
-    'voice_parameters': {
-        'gujarati': {
-            'speed': 163,      # Speech speed (50-300) - for espeak-ng
-            'pitch': 55,       # Voice pitch (0-99, female cute girl voice)
-            'volume': 100,     # Volume (0-200)
-            'amplitude': 100   # Amplitude (0-200)
-        },
-        'english': {
-            'speed': 163,      # Speech speed (50-300) - for espeak-ng
-            'pitch': 55,       # Voice pitch (0-99, female voice)
-            'volume': 100,     # Volume (0-200)
-            'amplitude': 100   # Amplitude (0-200)
-        }
-    },
-    'windows_speech_fallback': True,  # Use Windows speech fallbacks when espeak-ng unavailable
-    'speech_queue_enabled': True,  # Enable speech queue system
-    'priority_speech_enabled': True,  # Enable priority speech (interrupts current speech)
-    'auto_language_detection': False,  # Auto-detect language from system locale
+        'noise': 0.667,  # Noise scale (0.0-1.0) for WAV generation
+        'length_penalty': 1.0,  # Length scale (0.0-2.0) for WAV generation
+    }
 }
 
 # Voice Settings removed (sound system disabled)

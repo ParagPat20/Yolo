@@ -42,14 +42,14 @@ except ImportError:
     TRACKER_AVAILABLE = False
     logger.error("❌ Advanced person tracker not available")
 
-# Try to import sound system
+# Try to import sound player
 try:
-    from sound_system import get_sound_system, get_messages
-    SOUND_AVAILABLE = True
-    logger.info("🔊 Sound system available")
+    from sound_player import get_sound_player
+    SOUND_PLAYER_AVAILABLE = True
+    logger.info("🔊 Sound player available")
 except ImportError:
-    SOUND_AVAILABLE = False
-    logger.warning("🔊 Sound system not available")
+    SOUND_PLAYER_AVAILABLE = False
+    logger.warning("🔊 Sound player not available")
 
 class CCTVSystem:
     """Main CCTV System integrating all components"""
@@ -69,19 +69,16 @@ class CCTVSystem:
         # Set CCTV system reference in person tracker for background sound
         self.person_tracker.set_cctv_system(self)
 
-        # Initialize sound system (background)
-        if SOUND_AVAILABLE:
+        # Initialize sound player
+        if SOUND_PLAYER_AVAILABLE:
             try:
-                self.sound_system = get_sound_system()
-                self.sound_messages = get_messages()
-                logger.info("🔊 Sound system initialized for background operation")
+                self.sound_player = get_sound_player()
+                logger.info("🔊 Sound player initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize sound system: {e}")
-                self.sound_system = None
-                self.sound_messages = None
+                logger.error(f"Failed to initialize sound player: {e}")
+                self.sound_player = None
         else:
-            self.sound_system = None
-            self.sound_messages = None
+            self.sound_player = None
 
         # System state
         self.running = False
@@ -288,37 +285,37 @@ class CCTVSystem:
 
     def play_background_sound(self, sound_type: str, **kwargs):
         """Play sound in background thread to avoid blocking main CCTV process"""
-        if not self.sound_system or not self.sound_messages:
+        if not self.sound_player:
             return
         
         def play_sound():
             try:
                 if sound_type == 'person_detected':
-                    self.sound_messages.person_detected()
+                    self.sound_player.play_person_detected()
                 elif sound_type == 'face_verification_request':
-                    self.sound_messages.face_verification_request()
+                    self.sound_player.play_verification_request()
                 elif sound_type == 'face_verification_reminder':
                     count = kwargs.get('count', 1)
-                    self.sound_messages.face_verification_reminder(count)
+                    self.sound_player.play_verification_reminder(count)
                 elif sound_type == 'unknown_person_alert':
-                    self.sound_messages.unknown_person_alert()
+                    self.sound_player.play_unknown_person_alert()
                 elif sound_type == 'security_breach':
-                    self.sound_messages.security_breach()
+                    self.sound_player.play_security_breach()
                 elif sound_type == 'known_person_greeting':
                     name = kwargs.get('name', '')
-                    self.sound_messages.known_person_greeting(name)
+                    self.sound_player.play_known_person_greeting(name)
                 elif sound_type == 'time_based_greeting':
-                    self.sound_messages.time_based_greeting()
+                    self.sound_player.play_time_based_greeting()
                 elif sound_type == 'welcome_back':
                     name = kwargs.get('name', '')
-                    self.sound_messages.welcome_back(name)
+                    self.sound_player.play_welcome_back(name)
                 elif sound_type == 'guest_mode_activated':
                     host_name = kwargs.get('host_name', '')
-                    self.sound_messages.guest_mode_activated(host_name)
+                    self.sound_player.play_guest_mode_activated(host_name)
                 elif sound_type == 'guest_mode_expired':
-                    self.sound_messages.guest_mode_expired()
+                    self.sound_player.play_guest_mode_expired()
                 elif sound_type == 'verification_timeout':
-                    self.sound_messages.verification_timeout()
+                    self.sound_player.play_verification_timeout()
             except Exception as e:
                 logger.error(f"Error playing background sound {sound_type}: {e}")
         
@@ -328,22 +325,22 @@ class CCTVSystem:
 
     def play_priority_sound(self, sound_type: str, **kwargs):
         """Play priority sound that interrupts current speech"""
-        if not self.sound_system or not self.sound_messages:
+        if not self.sound_player:
             return
         
         def play_priority_sound():
             try:
                 if sound_type == 'unknown_person_alert':
-                    self.sound_messages.unknown_person_alert()
+                    self.sound_player.play_unknown_person_alert()
                 elif sound_type == 'security_breach':
-                    self.sound_messages.security_breach()
+                    self.sound_player.play_security_breach()
                 elif sound_type == 'verification_timeout':
-                    self.sound_messages.verification_timeout()
+                    self.sound_player.play_verification_timeout()
                 elif sound_type == 'time_based_greeting':
-                    self.sound_messages.time_based_greeting()
+                    self.sound_player.play_time_based_greeting()
                 elif sound_type == 'known_person_greeting':
                     name = kwargs.get('name', '')
-                    self.sound_messages.known_person_greeting(name)
+                    self.sound_player.play_known_person_greeting(name)
             except Exception as e:
                 logger.error(f"Error playing priority sound {sound_type}: {e}")
         
