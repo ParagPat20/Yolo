@@ -267,8 +267,13 @@ class SoundSystem:
         try:
             self.is_speaking = True
             
-            # Initialize pyttsx3 engine
-            engine = pyttsx3.init()
+            # Initialize pyttsx3 engine with error handling
+            try:
+                engine = pyttsx3.init()
+            except Exception as init_error:
+                logger.warning(f"pyttsx3 init failed: {init_error}")
+                # Try to use existing engine or fallback
+                return
             
             # Set voice properties based on language
             if self.language == 'gu':
@@ -290,9 +295,15 @@ class SoundSystem:
                 engine.setProperty('rate', 150)  # Speed
                 engine.setProperty('volume', 1.0)  # Volume
             
-            # Speak the text
+            # Speak the text with timeout protection
             engine.say(text)
-            engine.runAndWait()
+            try:
+                engine.runAndWait()
+            except Exception as run_error:
+                if "run loop already started" in str(run_error):
+                    logger.warning("pyttsx3 run loop conflict - skipping speech")
+                else:
+                    raise run_error
             
             logger.info(f"🔊 Spoke with pyttsx3: {text[:50]}...")
             

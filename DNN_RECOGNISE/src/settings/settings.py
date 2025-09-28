@@ -172,8 +172,8 @@ SOUND_SYSTEM = {
             'amplitude': 100   # Amplitude (0-200)
         },
         'english': {
-            'speed': 150,      # Speech speed (50-300)
-            'pitch': 50,       # Voice pitch (0-99, female voice)
+            'speed': 163,      # Speech speed (50-300)
+            'pitch': 55,       # Voice pitch (0-99, female voice)
             'volume': 100,     # Volume (0-200)
             'amplitude': 100   # Amplitude (0-200)
         }
