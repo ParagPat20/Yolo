@@ -21,13 +21,11 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from collections import defaultdict, deque
-import platform
-import shutil
-import subprocess
+# Unused imports removed
 
 from settings.settings import (
     CAMERA, PERSON_DETECTION, FACE_DETECTION, FACE_RECOGNITION,
-    PERSON_TRACKING, FACE_TRACKING, SECURITY, PATHS, CCTV, AUDIO, HARDWARE
+    PERSON_TRACKING, FACE_TRACKING, SECURITY, PATHS, CCTV, HARDWARE
 )
 
 
@@ -53,43 +51,23 @@ except ImportError:
     HARDWARE_AVAILABLE = False
     logger.warning("🔧 Hardware interface not available")
 
-# Try to import sound libraries
+# Try to import sound system
 try:
-    import winsound
+    from sound_system import get_sound_system, get_messages
     SOUND_AVAILABLE = True
-    logger.info("🔊 Windows sound support available")
+    logger.info("🔊 Sound system available")
 except ImportError:
     SOUND_AVAILABLE = False
-    logger.warning("🔇 Sound support not available")
+    logger.warning("🔊 Sound system not available")
 
-# Check if Windows Speech API is available
+# Try to import sound player for MP3 sounds
 try:
-    import win32com.client
-    VOICE_AVAILABLE = True
-    logger.info("🗣️ Windows Speech API available")
+    from sound_player import get_sound_player
+    SOUND_PLAYER_AVAILABLE = True
+    logger.info("🔊 Sound player available")
 except ImportError:
-    try:
-        # Fallback to PowerShell speech
-        subprocess.run(['powershell', '-Command', 'Add-Type -AssemblyName System.Speech'], 
-                      capture_output=True, timeout=5)
-        VOICE_AVAILABLE = True
-        logger.info("🗣️ PowerShell speech available")
-    except:
-        VOICE_AVAILABLE = False
-        logger.warning("🔇 Voice support not available")
-
-# Raspberry Pi / Linux voice support (placed just after Windows lines for easy identification)
-try:
-    if platform.system() == 'Linux' and shutil.which('espeak-ng') is not None:
-        # Enable generic sound/voice via espeak-ng (Bluetooth speaker assumed already paired)
-        SOUND_AVAILABLE = True if SOUND_AVAILABLE is False else SOUND_AVAILABLE
-        VOICE_AVAILABLE = True
-        RPI_SPEECH_AVAILABLE = True
-        logger.info("🗣️ Linux/Raspberry Pi speech available via espeak-ng")
-    else:
-        RPI_SPEECH_AVAILABLE = False
-except Exception as _e:
-    RPI_SPEECH_AVAILABLE = False
+    SOUND_PLAYER_AVAILABLE = False
+    logger.warning("🔊 Sound player not available")
 
 @dataclass
 class PersonTrack:
@@ -113,7 +91,7 @@ class PersonTrack:
     is_trusted: bool = False  # Person is trusted (verified before)
     last_face_verification: float = 0.0  # Last time face was verified
     needs_face_check: bool = True  # New person needs face verification
-    siren_played: bool = False  # Whether siren has been played for this person
+    # Siren functionality removed
     
     # Enhanced verification system
     verification_attempts: int = 0  # Number of failed verification attempts
@@ -730,403 +708,7 @@ class ByteTracker:
         """Calculate Euclidean distance between two centers"""
         return math.sqrt((center1[0] - center2[0])**2 + (center1[1] - center2[1])**2)
 
-class WindowsSoundAlertSystem:
-    """Windows-native sound and voice alert system with threading"""
-    
-    def __init__(self):
-        # Debug sound system availability
-        logger.info(f"🔍 Sound system debug:")
-        logger.info(f"  - SOUND_AVAILABLE: {SOUND_AVAILABLE}")
-        logger.info(f"  - VOICE_AVAILABLE: {VOICE_AVAILABLE}")
-        logger.info(f"  - RPI_SPEECH_AVAILABLE: {RPI_SPEECH_AVAILABLE if 'RPI_SPEECH_AVAILABLE' in globals() else 'Not defined'}")
-        logger.info(f"  - Platform: {platform.system()}")
-        logger.info(f"  - SECURITY alert_sound: {SECURITY.get('alert_sound', False)}")
-        logger.info(f"  - SECURITY voice_alerts: {SECURITY.get('voice_alerts', False)}")
-        
-        # More permissive sound system initialization
-        self.sound_enabled = SECURITY.get('alert_sound', False) and (SOUND_AVAILABLE or platform.system() in ['Linux', 'Windows'])
-        self.voice_enabled = SECURITY.get('voice_alerts', False) and (VOICE_AVAILABLE or ('RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE))
-        self.last_voice_time = 0.0  # Cooldown for voice alerts
-        self.use_win32_speech = False
-        self.use_espeak_ng = bool('RPI_SPEECH_AVAILABLE' in globals() and RPI_SPEECH_AVAILABLE)
-        
-        logger.info(f"  - Final sound_enabled: {self.sound_enabled}")
-        logger.info(f"  - Final voice_enabled: {self.voice_enabled}")
-        logger.info(f"  - Final use_espeak_ng: {self.use_espeak_ng}")
-        self.play_token = 0  # Invalidate older sounds when a new one starts
-        self.current_process = None  # Track active subprocess for TTS/siren
-        self.thread_lock = threading.Lock()
-        self.alarm_active = False
-        self.alarm_thread = None
-        self.alarm_sound_path = AUDIO.get('alarm_sound_file', '') if 'AUDIO' in globals() else ''
-        
-        # Threading control
-        self.sound_threads = []  # Keep track of active sound threads
-        self.max_concurrent_sounds = 3  # Limit concurrent sounds
-        self._cleanup_threads()  # Clean up any old threads
-        
-        # Initialize Windows Speech API
-        if self.voice_enabled and not self.use_espeak_ng:
-            try:
-                import win32com.client
-                self.speech_engine = win32com.client.Dispatch("SAPI.SpVoice")
-                self.use_win32_speech = True
-                logger.info("🗣️ Windows Speech API initialized")
-            except Exception as e:
-                logger.info(f"Windows Speech API not available, using PowerShell: {e}")
-                self.use_win32_speech = False
-        elif self.voice_enabled and self.use_espeak_ng:
-            logger.info("🗣️ espeak-ng will be used for voice output on Linux/Raspberry Pi")
-        
-        if self.sound_enabled:
-            logger.info("🔊 Windows sound system ready")
-    
-    def _cleanup_threads(self):
-        """Clean up finished sound threads"""
-        self.sound_threads = [t for t in self.sound_threads if t.is_alive()]
-    
-    def _start_sound_thread(self, target_func, *args, **kwargs):
-        """Start a sound operation in a separate thread; cancel previous and play latest only"""
-        self._cleanup_threads()
-
-        # If an alarm is active, ignore non-alarm requests
-        if self.alarm_active and target_func not in (self._alarm_worker,):
-            logger.debug("🔔 Alarm active; skipping non-alarm sound request")
-            return
-
-        # Always cancel previous audio before starting a new one (unless starting alarm)
-        if target_func not in (self._alarm_worker,):
-            self.stop_all_sounds()
-
-        # Invalidate older tasks and create a new token
-        with self.thread_lock:
-            self.play_token += 1
-            current_token = self.play_token
-
-        def run_with_token():
-            try:
-                target_func(current_token, *args, **kwargs)
-            except Exception as e:
-                logger.error(f"Sound thread error: {e}")
-
-        thread = threading.Thread(target=run_with_token, daemon=True)
-        thread.start()
-        self.sound_threads.append(thread)
-        logger.debug(f"🔊 Started sound thread, active threads: {len(self.sound_threads)}")
-
-    def _spawn_process(self, args: List[str], token: int):
-        """Spawn a subprocess for audio and allow cancellation by token."""
-        try:
-            with self.thread_lock:
-                # If a new token has been issued, abort
-                if token != self.play_token:
-                    return
-                # Terminate any existing process first (defensive)
-                if self.current_process and self.current_process.poll() is None:
-                    try:
-                        self.current_process.terminate()
-                    except Exception:
-                        pass
-                self.current_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                proc = self.current_process
-
-            # Wait for completion, but break early if superseded
-            while True:
-                if proc.poll() is not None:
-                    break
-                with self.thread_lock:
-                    if token != self.play_token:
-                        # Superseded; terminate
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        break
-                time.sleep(0.05)
-        finally:
-            with self.thread_lock:
-                if self.current_process and self.current_process.poll() is not None:
-                    self.current_process = None
-
-    def _play_external_for_duration(self, args: List[str], token: int, duration_sec: int):
-        """Play an external command for up to duration_sec, cancellable by token."""
-        start_time = time.time()
-        try:
-            with self.thread_lock:
-                if token != self.play_token:
-                    return
-                # terminate any current process defensively
-                if self.current_process and self.current_process.poll() is None:
-                    try:
-                        self.current_process.terminate()
-                    except Exception:
-                        pass
-                self.current_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                proc = self.current_process
-
-            while True:
-                if proc.poll() is not None:
-                    break
-                with self.thread_lock:
-                    if token != self.play_token:
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        break
-                if time.time() - start_time >= duration_sec:
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
-                    break
-                time.sleep(0.05)
-        finally:
-            with self.thread_lock:
-                if self.current_process and self.current_process.poll() is not None:
-                    self.current_process = None
-    
-    def _play_windows_beep(self, token: int):
-        """Play Windows system beep"""
-        try:
-            if self.use_espeak_ng:
-                # Quick audible ping via espeak-ng
-                self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'beep'], token)
-            else:
-                winsound.Beep(800, 200)  # 800Hz for 200ms
-        except Exception as e:
-            logger.error(f"Failed to play beep: {e}")
-    
-    def _play_windows_siren(self, token: int):
-        """Play siren using Windows sounds"""
-        try:
-            if self.use_espeak_ng:
-                # Speak alert repeatedly to simulate siren on Raspberry Pi
-                for _ in range(6):
-                    with self.thread_lock:
-                        if token != self.play_token:
-                            return
-                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'Alert!'], token)
-            else:
-                # Play multiple beeps to simulate siren
-                for i in range(6):  # 3 seconds worth
-                    with self.thread_lock:
-                        if token != self.play_token:
-                            return
-                    freq = 800 if i % 2 == 0 else 1200
-                    winsound.Beep(freq, 250)  # 250ms each
-        except Exception as e:
-            logger.error(f"Failed to play siren: {e}")
-    
-    def _speak_text(self, token: int, text: str):
-        """Speak text using Windows TTS"""
-        try:
-            if self.use_espeak_ng:
-                self._spawn_process(['espeak-ng', '-s', '163', '-p', '55', text], token)
-            elif self.use_win32_speech:
-                # Use Windows Speech API
-                # Purge any queued speech so latest wins
-                try:
-                    # 1 = SVSFPurgeBeforeSpeak
-                    self.speech_engine.Speak("", 1)
-                except Exception:
-                    pass
-                self.speech_engine.Speak(text)
-            else:
-                # Use PowerShell as fallback
-                ps_command = (
-                    "Add-Type -AssemblyName System.Speech; "
-                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                    f"$s.Speak(\"{text}\");"
-                )
-                self._spawn_process(['powershell', '-Command', ps_command], token)
-        except Exception as e:
-            logger.error(f"Failed to speak text: {e}")
-
-    def _alarm_worker(self, token: int, duration_sec: int):
-        """Run a non-preemptible alarm for duration_sec seconds."""
-        logger.info(f"🔊 _alarm_worker started with duration: {duration_sec} seconds")
-        logger.info(f"  - use_espeak_ng: {self.use_espeak_ng}")
-        logger.info(f"  - sound_enabled: {self.sound_enabled}")
-        logger.info(f"  - voice_enabled: {self.voice_enabled}")
-        
-        end_time = time.time() + max(1, int(duration_sec))
-        with self.thread_lock:
-            self.alarm_active = True
-        try:
-            # Try to use configured MP3 alarm if available
-            try_mp3 = False
-            alarm_path = self.alarm_sound_path
-            logger.info(f"🔊 Checking for MP3 alarm file: {alarm_path}")
-            
-            if isinstance(alarm_path, str) and len(alarm_path) > 0:
-                mp3_path = alarm_path if os.path.isabs(alarm_path) else os.path.join(os.getcwd(), alarm_path)
-                logger.info(f"🔊 MP3 path: {mp3_path}")
-                logger.info(f"🔊 MP3 file exists: {os.path.exists(mp3_path)}")
-                if os.path.exists(mp3_path):
-                    try_mp3 = True
-                    logger.info("🔊 MP3 file found, attempting to play")
-            else:
-                logger.info("🔊 No MP3 alarm path configured")
-                
-            if try_mp3:
-                # Linux/RPi: prefer mpg123/ffplay/omxplayer
-                if platform.system() == 'Linux':
-                    if shutil.which('mpg123'):
-                        self._play_external_for_duration(['mpg123', '-q', '--loop', '-1', mp3_path], token, duration_sec)
-                        return
-                    elif shutil.which('ffplay'):
-                        self._play_external_for_duration(['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', '-loop', '0', mp3_path], token, duration_sec)
-                        return
-                    elif shutil.which('omxplayer'):
-                        self._play_external_for_duration(['omxplayer', '--no-keys', '--loop', mp3_path], token, duration_sec)
-                        return
-                # Windows: use PowerShell + Windows Media Player COM
-                if platform.system() == 'Windows' and shutil.which('powershell'):
-                    logger.info("🔊 Using Windows PowerShell + Windows Media Player for MP3")
-                    seconds = max(1, int(duration_sec))
-                    ps = (
-                        "$p = New-Object -ComObject WMPlayer.OCX; "
-                        f"$m = $p.newMedia(\"{mp3_path}\"); "
-                        "$p.controls.play(); "
-                        f"Start-Sleep -Seconds {seconds}; "
-                        "$p.controls.stop(); $p.close();"
-                    )
-                    logger.info(f"🔊 Starting PowerShell MP3 playback for {seconds} seconds")
-                    self._spawn_process(['powershell', '-NoProfile', '-Command', ps], token)
-                    logger.info("🔊 PowerShell MP3 playback started, returning from alarm worker")
-                    return
-                else:
-                    logger.info("🔊 PowerShell not available, falling back to other methods")
-
-            # Fallback: Loop until duration expires making alert tones
-            logger.info("🔊 Using fallback alarm method (no MP3 file)")
-            alarm_count = 0
-            while time.time() < end_time:
-                # Produce alarm sound chunk
-                if self.use_espeak_ng:
-                    logger.info(f"🔊 Playing espeak-ng alarm chunk {alarm_count}")
-                    self._spawn_process(['espeak-ng', '-a', '200', '-s', '163', '-p', '55', 'Alert!'], token)
-                elif self.sound_enabled and not self.use_espeak_ng and 'winsound' in globals():
-                    try:
-                        logger.info(f"🔊 Playing Windows beep alarm chunk {alarm_count}")
-                        winsound.Beep(1000, 300)
-                        winsound.Beep(700, 300)
-                    except Exception as e:
-                        logger.error(f"❌ Error playing Windows beep: {e}")
-                else:
-                    # No audio available; just wait a bit
-                    logger.warning(f"🔇 No audio available for alarm chunk {alarm_count}")
-                    time.sleep(0.5)
-
-                alarm_count += 1
-                # Small pause to avoid busy loop
-                time.sleep(0.1)
-        finally:
-            with self.thread_lock:
-                self.alarm_active = False
-            # Ensure any residual process is stopped
-            self.stop_all_sounds()
-
-    def start_alarm(self, duration_sec: int = 120):
-        """Public method to start a 2-minute alarm (non-preemptible)."""
-        logger.info(f"🔊 start_alarm called with duration: {duration_sec} seconds")
-        logger.info(f"  - sound_enabled: {self.sound_enabled}")
-        logger.info(f"  - voice_enabled: {self.voice_enabled}")
-        logger.info(f"  - use_espeak_ng: {self.use_espeak_ng}")
-        logger.info(f"  - alarm_active: {self.alarm_active}")
-        
-        # If already active, restart timer by stopping and starting
-        if self.alarm_active:
-            logger.info("🔊 Stopping existing alarm before starting new one")
-            self.stop_all_sounds()
-        
-        logger.info("🔊 Starting alarm worker thread")
-        self._start_sound_thread(self._alarm_worker, duration_sec)
-    
-    def play_verification_request(self):
-        """Play sound and voice alert for verification request"""
-        current_time = time.time()
-        
-        if self.sound_enabled:
-            self._start_sound_thread(self._play_windows_beep)
-        
-        # Voice cooldown of 3 seconds to prevent spam
-        if self.voice_enabled and (current_time - self.last_voice_time > 3.0):
-            message = "Person detected. Please verify your face."
-            self._start_sound_thread(self._speak_text, message)
-            self.last_voice_time = current_time
-    
-    def play_verification_attempt(self, attempt: int, max_attempts: int):
-        """Play voice alert for verification attempt"""
-        current_time = time.time()
-        
-        # Voice cooldown of 2 seconds for attempt messages
-        if self.voice_enabled and (current_time - self.last_voice_time > 2.0):
-            remaining = max_attempts - attempt
-            if remaining > 0:
-                message = f"{attempt}"
-            else:
-                message = "Final verification attempt failed."
-            self._start_sound_thread(self._speak_text, message)
-            self.last_voice_time = current_time
-    
-    def play_verification_reminder(self):
-        """Play reminder for face verification"""
-        current_time = time.time()
-        
-        # Voice cooldown of 4 seconds for reminders
-        if self.voice_enabled and (current_time - self.last_voice_time > 4.0):
-            message = "Please verify."
-            self._start_sound_thread(self._speak_text, message)
-            self.last_voice_time = current_time
-    
-    def play_unknown_alert(self):
-        """Play siren and voice alert for unknown person"""
-        logger.info("🔊 play_unknown_alert called")
-        
-        # Latest wins: choose voice alert as the most informative
-        if self.voice_enabled:
-            logger.info("🗣️ Playing voice alert for unknown person...")
-            message = "Alert! Unknown face detected!"
-            self._start_sound_thread(self._speak_text, message)
-            self.last_voice_time = time.time()
-        elif self.sound_enabled:
-            logger.info("🚨 Playing siren...")
-            self._start_sound_thread(self._play_windows_siren)
-        else:
-            logger.info("🔇 Audio is disabled")
-    
-    def play_welcome_back(self, name: str):
-        """Play welcome message for known person"""
-        if self.voice_enabled:
-            message = f"Welcome back, {name}!"
-            self._start_sound_thread(self._speak_text, message)
-    
-    def stop_all_sounds(self):
-        """Stop all playing sounds and clean up threads"""
-        # Invalidate any running sound threads
-        with self.thread_lock:
-            self.play_token += 1
-
-        if self.use_win32_speech and self.voice_enabled:
-            try:
-                self.speech_engine.Speak("", 1)  # Stop current speech
-            except Exception as e:
-                logger.error(f"Failed to stop speech: {e}")
-        
-        # Terminate any running subprocess (espeak-ng or PowerShell)
-        with self.thread_lock:
-            if self.current_process and self.current_process.poll() is None:
-                try:
-                    self.current_process.terminate()
-                except Exception:
-                    pass
-                self.current_process = None
-        
-        # Clean up finished threads
-        self._cleanup_threads()
-        logger.info(f"🔇 Stopped all sounds, active threads: {len(self.sound_threads)}")
+# Sound system removed
 
 class AdvancedPersonTracker:
     """Main class that integrates all components"""
@@ -1137,12 +719,29 @@ class AdvancedPersonTracker:
         # Initialize hardware interface
         self.hardware_manager = get_hardware_manager() if HARDWARE_AVAILABLE else None
 
+        # Initialize sound system (will be overridden by CCTV system if available)
+        if SOUND_AVAILABLE:
+            try:
+                # Use settings-based initialization (language from settings)
+                self.sound_system = get_sound_system()  # Uses settings default language
+                self.sound_messages = get_messages()    # Uses settings default language
+                logger.info("🔊 Sound system initialized with settings configuration")
+            except Exception as e:
+                logger.error(f"Failed to initialize sound system: {e}")
+                self.sound_system = None
+                self.sound_messages = None
+        else:
+            self.sound_system = None
+            self.sound_messages = None
+        
+        # Reference to parent CCTV system for background sound
+        self.cctv_system = None
+
         # Initialize components
         self.person_detector = YOLOv8PersonDetector()
         self.face_detector = SCRFDFaceDetector()
         self.face_recognizer = ArcFaceRecognizer()
         self.tracker = ByteTracker(parent_tracker=self)
-        self.sound_system = WindowsSoundAlertSystem()
 
         # Smart verification management
         self.last_unknown_alert = {}
@@ -1161,7 +760,10 @@ class AdvancedPersonTracker:
 
         # Set initial status
         if self.hardware_manager:
-            self.hardware_manager.set_system_status('ready')
+            try:
+                self.hardware_manager.set_system_status('ready')
+            except Exception as e:
+                logger.warning(f"Hardware status not available: {e}")
 
         logger.info("✅ Advanced Person Tracking System with CCTV Integration initialized")
     
@@ -1169,18 +771,26 @@ class AdvancedPersonTracker:
         """Calculate Euclidean distance between two centers"""
         return math.sqrt((center1[0] - center2[0])**2 + (center1[1] - center2[1])**2)
     
+    def set_cctv_system(self, cctv_system):
+        """Set reference to parent CCTV system for background sound"""
+        self.cctv_system = cctv_system
+
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, List[PersonTrack]]:
         """Process a single frame and return annotated frame with tracks - enhanced for CCTV"""
         # Keep a reference to the latest frame for saving tasks
         self._last_frame = frame
+        
         # Detect persons
         person_detections = self.person_detector.detect_persons(frame)
+        logger.debug(f"🔍 Frame processing: {len(person_detections)} person detections found")
 
         # Update person tracking
         person_tracks = self.tracker.update(person_detections)
+        logger.debug(f"🎯 Tracking: {len(person_tracks)} active tracks")
 
         # Process each tracked person
         for track in person_tracks:
+            logger.debug(f"👤 Processing track {track.track_id}: center=({track.center[0]:.1f}, {track.center[1]:.1f}), confidence={track.confidence:.2f}")
             self._process_person_track(frame, track)
 
         # Check for guest mode activation
@@ -1294,10 +904,10 @@ class AdvancedPersonTracker:
 
         # Announce guest mode activation
         if self.hardware_manager:
-            self.hardware_manager.activate_guest_mode(host_name)
-        elif self.sound_system and self.sound_system.voice_enabled:
-            message = f"Welcome back, {host_name}. {AUDIO['guest_mode_message']}"
-            self.sound_system._speak_text(message)
+            try:
+                self.hardware_manager.activate_guest_mode(host_name)
+            except Exception as e:
+                logger.warning(f"Hardware guest mode not available: {e}")
 
         logger.info(f"👥 Guest mode activated for track {guest_track.track_id} with host {host_name}")
 
@@ -1329,9 +939,10 @@ class AdvancedPersonTracker:
 
         # Announce reversion
         if self.hardware_manager:
-            self.hardware_manager.revert_guest_mode()
-        elif self.sound_system and self.sound_system.voice_enabled:
-            self.sound_system._speak_text(AUDIO['guest_mode_reverted'])
+            try:
+                self.hardware_manager.revert_guest_mode()
+            except Exception as e:
+                logger.warning(f"Hardware guest mode revert not available: {e}")
 
         # If this guest is still unknown, start monitoring them normally
         if not guest_track.is_known:
@@ -1443,34 +1054,45 @@ class AdvancedPersonTracker:
         )
         
         if should_recognize:
+            logger.debug(f"🔍 Face recognition attempt for track {track.track_id}: needs_face_check={track.needs_face_check}, verification_requested={track.verification_requested}, frames_since_recognition={track.frames_since_recognition}")
             # Detect face within person bounding box
             faces = self.face_detector.detect_faces(frame, track.bbox)
+            logger.debug(f"👤 Face detection for track {track.track_id}: {len(faces)} faces detected")
             
             if faces:
                 # Use the largest/most confident face
                 best_face = max(faces, key=lambda f: f[4])  # Sort by confidence
                 fx, fy, fw, fh, face_conf = best_face
+                logger.debug(f"👤 Best face for track {track.track_id}: size=({fw}x{fh}), confidence={face_conf:.2f}")
                 
                 # Check if face is large enough and has good quality
                 if min(fw, fh) >= FACE_TRACKING['min_face_size']:
                     track.face_bbox = (fx, fy, fw, fh)
+                    logger.debug(f"✅ Face size OK for track {track.track_id}: {min(fw, fh)} >= {FACE_TRACKING['min_face_size']}")
                     
                     # Extract face ROI
                     face_roi = frame[fy:fy+fh, fx:fx+fw]
                     
                     # Check if face ROI is good quality (not too dark, not too small)
                     if self._is_face_good_quality(face_roi):
+                        logger.debug(f"✅ Face quality OK for track {track.track_id}, proceeding with recognition")
                         # Recognize face
                         identity, confidence = self.face_recognizer.recognize_face(face_roi)
+                        logger.debug(f"🎯 Face recognition result for track {track.track_id}: identity='{identity}', confidence={confidence:.3f}")
                         
                         # Process recognition result
                         self._handle_face_recognition_result(track, identity, confidence, face_roi, current_time)
                     else:
                         # Face quality is poor, don't treat as "verified unknown"
-                        logger.debug(f"Poor face quality for track {track.track_id}, skipping recognition")
+                        logger.debug(f"❌ Poor face quality for track {track.track_id}, skipping recognition")
                         # Continue waiting for better face quality
+                else:
+                    logger.debug(f"❌ Face too small for track {track.track_id}: {min(fw, fh)} < {FACE_TRACKING['min_face_size']}")
             else:
                 # No face detected - handle based on current state
+                logger.debug(f"❌ No faces detected for track {track.track_id}")
+                # Set flag that face was lost (for 3-second timer reset logic)
+                track.face_was_lost = True
                 self._handle_no_face_detected(track, current_time)
     
     def _handle_face_recognition_result(self, track: PersonTrack, identity: str, confidence: float, face_roi: np.ndarray, current_time: float):
@@ -1480,27 +1102,33 @@ class AdvancedPersonTracker:
         track.frames_since_recognition = 0
         track.last_face_verification = current_time
         track.needs_face_check = False
-        track.verification_requested = False
+        # Don't reset verification_requested here - let the verification logic handle it
         
         if identity != "Unknown":
             # Known person identified - reset verification attempts
+            logger.info(f"✅ KNOWN PERSON DETECTED: Track {track.track_id} identified as '{identity}' with confidence {confidence:.3f}")
             track.is_known = True
             track.is_trusted = True
             track.verification_attempts = 0  # Reset failed attempts counter
+            track.verification_requested = False  # Reset verification state for known person
             self.trusted_persons[identity] = current_time
             self.global_trusted_memory[identity] = current_time  # Update global memory
 
             # Clear any previous alerts
-            track.siren_played = False  # Clear any previous unknown alerts
             track.alert_sent = False   # Reset alert state for proper welcome
 
             # Stop recording if it was active
             if track.is_recording:
+                logger.info(f"📹 Stopping recording for known person {track.track_id}")
                 self._stop_recording(track.track_id)
 
             # Set status to ready (green LED)
             if self.hardware_manager:
-                self.hardware_manager.set_system_status('ready')
+                try:
+                    self.hardware_manager.set_system_status('ready')
+                    logger.debug(f"🟢 Hardware status set to 'ready' for known person {track.track_id}")
+                except Exception as e:
+                    logger.warning(f"Hardware status not available: {e}")
 
             # Check if this is the first person today for time-based greeting
             current_time_dt = datetime.now()
@@ -1509,9 +1137,11 @@ class AdvancedPersonTracker:
             if current_time - track.last_greeting_time > 3600:  # Greet at most once per hour
                 # Use time-based greeting for first identification of the day
                 if track.last_greeting_time < today_start:
+                    logger.info(f"👋 First greeting today for {identity}")
                     self._greet_person(track, current_time)
                 else:
                     # Welcome back for subsequent identifications
+                    logger.info(f"🎉 Welcome back greeting for {identity}")
                     self._welcome_back_person(track, current_time)
 
                 track.last_greeting_time = current_time
@@ -1519,23 +1149,77 @@ class AdvancedPersonTracker:
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 
         else:
-            # Unknown person detected - trigger immediate alarm if not already handled
-            if not track.siren_played and not track.alert_sent:
-                logger.warning(f"🚨 UNKNOWN PERSON DETECTED - Person {track.track_id} (confidence: {confidence:.3f})")
-                print(f"🚨 ALERT! Unknown person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
-                print("🚨 SECURITY BREACH - Unauthorized person identified!")
+            # Unknown person detected - handle based on current verification state
+            if not track.verification_requested and not track.alert_sent:
+                # First time unknown -> start verification window
+                track.verification_requested = True
+                track.verification_start_time = current_time
+                track.verification_attempts = 0
+                track.last_verification_attempt = 0.0
+
+                logger.info(f"🔍 Starting 20-second verification window for track {track.track_id}")
+                print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face for verification")
+                print(f"⏰ You have 20 seconds to show your face...")
+
+                if self.hardware_manager:
+                    try:
+                        self.hardware_manager.set_system_status('verifying')
+                    except Exception as e:
+                        logger.warning(f"Hardware status not available: {e}")
+
+                self._play_verification_request(track)
+                return  # Verification window started
+
+            elif track.verification_requested and not track.alert_sent:
+                # Already in verification window - check timeouts and show countdown
+                elapsed = current_time - track.verification_start_time
                 
-                # Trigger immediate alarm
-                self._trigger_unknown_person_alarm(track, current_time)
+                # Use shorter timeout when face is detected (10 seconds) vs no face (20 seconds)
+                face_detected_timeout = 10.0  # 10 seconds when face is visible
+                no_face_timeout = track.unknown_timeout  # 20 seconds when no face
                 
-                # Save unknown face if enabled
-                if SECURITY['log_unknown_faces']:
-                    self._save_unknown_face(face_roi, track.track_id)
+                # Check if this is the first time we see a face for this track
+                if not hasattr(track, 'face_first_detected_time'):
+                    track.face_first_detected_time = current_time
+                    logger.info(f"👤 Face detected for track {track.track_id} - starting 10-second face adjustment window")
+                    print(f"👤 Face detected! You have 10 seconds to adjust your position...")
+                elif not hasattr(track, 'face_was_lost') or track.face_was_lost:
+                    # Face was lost and now detected again - reset timer
+                    track.face_first_detected_time = current_time
+                    track.face_was_lost = False
+                    logger.info(f"👤 Face re-detected for track {track.track_id} - resetting 10-second timer")
+                    print(f"👤 Face re-detected! You have 10 seconds to adjust your position...")
                 
-                return  # Exit early since we've handled the unknown person
-            
-            # If already handled as unknown or alert sent, do not continue attempts
-            if (not track.is_known) or getattr(track, 'siren_played', False) or getattr(track, 'alert_sent', False):
+                # Use face detection timeout
+                face_elapsed = current_time - track.face_first_detected_time
+                remaining = face_detected_timeout - face_elapsed
+                
+                # Debug logging
+                logger.debug(f"🔍 Track {track.track_id}: face_elapsed={face_elapsed:.1f}s, remaining={remaining:.1f}s, timeout={face_detected_timeout}s")
+                
+                # Show countdown every second
+                if int(face_elapsed) != getattr(track, '_last_face_countdown_second', -1):
+                    track._last_face_countdown_second = int(face_elapsed)
+                    if remaining > 0:
+                        print(f"⏰ {int(remaining)} seconds to adjust your face...")
+                
+                if face_elapsed >= face_detected_timeout:
+                    # Face is visible but still unknown after 10s timeout -> escalate to full unknown
+                    logger.warning(f"⚠️ Person {track.track_id} remained unknown for {face_elapsed:.1f}s with face visible - escalating to UNKNOWN")
+                    print(f"🚨 TIME'S UP! Person failed to verify within 10 seconds of face detection")
+                    print(f"🚨 UNKNOWN PERSON: Person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) failed to verify within 10 seconds")
+                    # Save face and full body, and ensure recording starts via helper
+                    try:
+                        self._handle_unknown_person_verified(track, face_roi, current_time, frame=getattr(self, '_last_frame', None))
+                    except Exception as e:
+                        logger.error(f"Error handling verified unknown: {e}")
+                    return
+                else:
+                    # Still in 10-second face adjustment window - continue verification attempts
+                    return
+
+            # If already handled as unknown or alert sent, do not continue
+            if getattr(track, 'alert_sent', False):
                 return
 
             # TRIPLE VERIFICATION: Check cooldown before incrementing attempts
@@ -1564,9 +1248,7 @@ class AdvancedPersonTracker:
                     track.verification_start_time = current_time
                     track.needs_face_check = True
                     
-                    # Play verification attempt voice message
-                    if SECURITY.get('voice_alerts', False):
-                        self.sound_system.play_verification_attempt(track.verification_attempts, track.max_verification_attempts)
+                    # Visual verification attempt only
             else:
                 # Still in cooldown period - don't count as attempt yet
                 remaining_cooldown = track.verification_attempt_cooldown - time_since_last_attempt
@@ -1609,7 +1291,7 @@ class AdvancedPersonTracker:
     
     def _handle_no_face_detected(self, track: PersonTrack, current_time: float):
         """Handle when no face is detected for a person - enhanced for CCTV with repeated verification requests"""
-        if track.needs_face_check and not track.verification_requested:
+        if track.needs_face_check and not track.verification_requested and not track.alert_sent:
             # New person detected but no face visible - request verification
             track.verification_requested = True
             track.verification_start_time = current_time
@@ -1621,7 +1303,10 @@ class AdvancedPersonTracker:
 
             # Update hardware status
             if self.hardware_manager:
-                self.hardware_manager.set_system_status('verifying')
+                try:
+                    self.hardware_manager.set_system_status('verifying')
+                except Exception as e:
+                    logger.warning(f"Hardware status not available: {e}")
 
             # Play initial verification request
             self._play_verification_request(track)
@@ -1660,11 +1345,15 @@ class AdvancedPersonTracker:
                 # Play verification reminder
                 self._play_verification_reminder(track, track.verification_reminder_count)
 
-            # Check if we've passed the "unknown" threshold (4 seconds) - start recording and alarm
-            if time_since_request > unknown_timeout and not track.siren_played:
-                # Mark as potential unknown person
+            # Check if we've passed the "unknown" threshold (10 seconds) - start recording and alarm
+            if time_since_request > unknown_timeout and not track.alert_sent:
+                # Mark as unknown person - set all unknown flags
                 logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
-                track.siren_played = True  # Prevent multiple alerts
+                track.alert_sent = True  # Prevent multiple alerts
+                track.is_known = False  # Mark as unknown
+                track.is_trusted = False  # Mark as not trusted
+                track.identity = "Unknown"  # Set identity as unknown
+                track.verification_requested = False  # Stop verification process
 
                 # Start recording unknown person if enabled
                 if CCTV['recording_enabled']:
@@ -1674,155 +1363,156 @@ class AdvancedPersonTracker:
                 logger.warning(f"🚨 TRIGGERING ALARM for unknown person {track.track_id}")
                 self._trigger_unknown_person_alarm(track, current_time)
 
-            # Check if verification timeout has passed (15 seconds) - start full alarm
-            if time_since_request > verification_timeout:
-                # Full timeout - treat as unverified person and start alarm
-                logger.warning(f"⏰ Person {track.track_id} verification timeout after {verification_timeout}s - starting security alarm")
-                self._handle_verification_timeout_alarm(track, current_time)
+                # Save full body photo since face is not available
+                try:
+                    frame_to_save = getattr(self, '_last_frame', None)
+                    if frame_to_save is not None:
+                        self._save_unknown_person_full_body(frame_to_save, track)
+                        logger.info(f"📸 Saved full body photo for unknown person {track.track_id} (no face)")
+                except Exception as e:
+                    logger.error(f"Error saving unknown full body (no face): {e}")
+
+            # The 10-second timeout is now handled in the face recognition path above
+            # No need for additional 15-second timeout logic
 
     def _play_verification_request(self, track: PersonTrack):
         """Play initial verification request"""
         try:
-            logger.info(f"🔊 _play_verification_request called for track {track.track_id}")
-            logger.info(f"  - hardware_manager available: {self.hardware_manager is not None}")
-            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled}")
-            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled}")
-            logger.info(f"  - SECURITY voice_alerts: {SECURITY.get('voice_alerts', False)}")
+            logger.info(f"🔍 Verification request for track {track.track_id}")
+            
+            if self.cctv_system:
+                self.cctv_system.play_background_sound('face_verification_request')
+            elif self.sound_messages:
+                logger.info("🔍 Using sound system for verification request")
+                self.sound_messages.face_verification_request()
+            
+            # Play verification beep
+            if SOUND_PLAYER_AVAILABLE:
+                try:
+                    from sound_player import play_verification_beep
+                    play_verification_beep()
+                except Exception as e:
+                    logger.warning(f"Verification beep not available: {e}")
             
             if self.hardware_manager:
-                logger.info("🔊 Using hardware manager for verification request")
+                logger.info("🔍 Using hardware manager for verification request")
                 self.hardware_manager.request_verification()
-            elif SECURITY.get('voice_alerts', False):
-                logger.info("🔊 Using sound system for verification request")
-                self.sound_system.play_verification_request()
             else:
-                logger.warning("🔇 No audio system available for verification request")
+                logger.info("🔍 Visual verification request only")
         except Exception as e:
-            logger.error(f"Error playing verification request: {e}")
+            logger.error(f"Error in verification request: {e}")
 
     def _play_verification_reminder(self, track: PersonTrack, reminder_count: int):
         """Play verification reminder with progressive urgency"""
         try:
+            if self.cctv_system:
+                self.cctv_system.play_background_sound('face_verification_reminder', count=reminder_count)
+            elif self.sound_messages:
+                logger.info("🔍 Using sound system for verification reminder")
+                self.sound_messages.face_verification_reminder(reminder_count)
+            
+            # Play verification beep for reminders
+            if SOUND_PLAYER_AVAILABLE:
+                try:
+                    from sound_player import play_verification_beep
+                    play_verification_beep()
+                except Exception as e:
+                    logger.warning(f"Verification beep not available: {e}")
+            
             if self.hardware_manager:
                 self.hardware_manager.request_verification()
-            elif SECURITY.get('voice_alerts', False):
-                # Progressive urgency in voice
-                if reminder_count <= 2:
-                    self.sound_system.play_verification_reminder()
-                elif reminder_count <= 4:
-                    # More urgent reminder
-                    if hasattr(self.sound_system, '_speak_text'):
-                        self.sound_system._speak_text(0, "Face verification required - Look at camera")
-                else:
-                    # Final warning
-                    if hasattr(self.sound_system, '_speak_text'):
-                        self.sound_system._speak_text(0, "Final warning - Show your face now")
-        except Exception as e:
-            logger.error(f"Error playing verification reminder: {e}")
-
-    def _handle_verification_timeout_alarm(self, track: PersonTrack, current_time: float):
-        """Handle verification timeout by starting full security alarm"""
-        if not track.alert_sent:
-            logger.warning(f"🚨 Person {track.track_id} failed to verify face after timeout - starting security alarm")
-            print(f"🚨 SECURITY ALERT! Person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) failed face verification")
-            print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
-
-            # Debug sound system before alarm
-            logger.info(f"🔊 Starting alarm for track {track.track_id}")
-            logger.info(f"  - sound_system available: {self.sound_system is not None}")
-            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled if self.sound_system else 'N/A'}")
-            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled if self.sound_system else 'N/A'}")
-
-            # Start 2-minute security alarm
-            if self.sound_system:
-                logger.info("🔊 Starting 2-minute security alarm")
-                self.sound_system.start_alarm(duration_sec=120)
             else:
-                logger.warning("🔇 No sound system available for alarm")
-            
-            # Start recording for full duration
-            if CCTV['recording_enabled']:
-                track.recording_end_time = current_time + 120  # 2 minutes
-                if not track.is_recording:
-                    self._start_recording(track)
+                logger.info(f"🔍 Verification reminder {reminder_count} for track {track.track_id}")
+        except Exception as e:
+            logger.error(f"Error in verification reminder: {e}")
 
-            # Update hardware status
-            if self.hardware_manager:
-                self.hardware_manager.set_system_status('alert')
-                self.hardware_manager.play_alarm()
-
-            track.alert_sent = True
-            track.siren_played = True
 
     def _trigger_unknown_person_alarm(self, track: PersonTrack, current_time: float):
         """Trigger immediate alarm for unknown person"""
         try:
-            logger.warning(f"🚨 IMMEDIATE ALARM for unknown person {track.track_id}")
+            logger.warning(f"🚨 IMMEDIATE ALARM TRIGGERED for unknown person {track.track_id}")
             print(f"🚨 SECURITY ALERT! Unknown person at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
 
-            # Debug sound system before alarm
-            logger.info(f"🔊 Triggering immediate alarm for track {track.track_id}")
-            logger.info(f"  - sound_system available: {self.sound_system is not None}")
-            logger.info(f"  - sound_system.sound_enabled: {self.sound_system.sound_enabled if self.sound_system else 'N/A'}")
-            logger.info(f"  - sound_system.voice_enabled: {self.sound_system.voice_enabled if self.sound_system else 'N/A'}")
-            logger.info(f"  - sound_system.use_espeak_ng: {self.sound_system.use_espeak_ng if self.sound_system else 'N/A'}")
-
-            # Start 2-minute security alarm
-            if self.sound_system:
-                logger.info("🔊 Starting 2-minute security alarm for unknown person")
-                try:
-                    self.sound_system.start_alarm(duration_sec=120)
-                    logger.info("🔊 Alarm start command sent successfully")
-                except Exception as e:
-                    logger.error(f"❌ Error starting alarm: {e}")
-            else:
-                logger.warning("🔇 No sound system available for alarm")
-            
-            # Start recording for full duration
+            # Start recording for configured initial duration
             if CCTV['recording_enabled']:
-                track.recording_end_time = current_time + 120  # 2 minutes
+                initial_len = CCTV.get('unknown_initial_record_seconds', 10.0)
+                logger.info(f"📹 Starting recording ({initial_len:.0f}s) for unknown person {track.track_id}")
+                track.recording_end_time = current_time + initial_len
                 if not track.is_recording:
                     self._start_recording(track)
 
-            # Update hardware status
+            # Play alarm sound
+            if self.cctv_system:
+                self.cctv_system.play_priority_sound('unknown_person_alert')
+            elif self.sound_messages:
+                logger.info(f"🔊 Playing sound system alarm for unknown person {track.track_id}")
+                self.sound_messages.unknown_person_alert()
+            
+            # Play MP3 alarm sound
+            if SOUND_PLAYER_AVAILABLE:
+                try:
+                    from sound_player import play_alarm
+                    play_alarm()
+                except Exception as e:
+                    logger.warning(f"Alarm sound not available: {e}")
+            
             if self.hardware_manager:
+                logger.info(f"🔴 Setting hardware status to 'alert' for unknown person {track.track_id}")
                 self.hardware_manager.set_system_status('alert')
-                self.hardware_manager.play_alarm()
+                try:
+                    logger.info(f"🔊 Attempting to play hardware alarm for unknown person {track.track_id}")
+                    self.hardware_manager.play_alarm()
+                except Exception as e:
+                    logger.warning(f"Hardware alarm not available: {e}")
+            else:
+                logger.info("🔇 No sound system or hardware manager available for alarm")
 
+            # Mark person as unknown for red box display
             track.alert_sent = True
-            track.siren_played = True
+            track.is_known = False  # Mark as unknown
+            track.is_trusted = False  # Mark as not trusted
+            track.identity = "Unknown"  # Set identity as unknown
+            track.verification_requested = False  # Stop verification process
+            logger.info(f"✅ Alarm sequence completed for unknown person {track.track_id}")
             
         except Exception as e:
-            logger.error(f"Error triggering unknown person alarm: {e}")
+            logger.error(f"❌ Error triggering unknown person alarm: {e}")
     
     def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""
-        if not track.siren_played:
-            # Play siren and alert for unknown face
+        if not track.alert_sent:
+            # Alert for unknown face
             logger.warning(f"🚨 UNKNOWN FACE VERIFIED - Person {track.track_id}")
             print(f"\n🚨 ALERT! Unknown face detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 SECURITY BREACH - Unauthorized person identified!")
             
-            # Play 2-minute alarm and start recording
-            logger.info("🔊 Attempting to play 2-minute unknown alert and start recording...")
+            # Play MP3 alarm sound
+            if SOUND_PLAYER_AVAILABLE:
+                try:
+                    from sound_player import play_alarm
+                    play_alarm()
+                except Exception as e:
+                    logger.warning(f"Alarm sound not available: {e}")
+            
+            # Hardware alarm if available
             if self.hardware_manager:
                 try:
+                    logger.info(f"🔊 Playing hardware alarm for verified unknown person {track.track_id}")
                     self.hardware_manager.play_alarm()
-                except Exception:
-                    pass
-            # Software alarm and recording
-            if self.sound_system:
-                self.sound_system.start_alarm(duration_sec=120)
+                except Exception as e:
+                    logger.warning(f"Hardware alarm failed: {e}")
             
             # Save unknown face and full body
             if SECURITY['log_unknown_faces']:
+                logger.info(f"💾 Saving unknown face and full body for track {track.track_id}")
                 self._save_unknown_face(face_roi, track.track_id)
                 # Also save full body photograph
                 try:
                     frame_to_save = frame if frame is not None else getattr(self, '_last_frame', None)
                     if frame_to_save is not None:
                         self._save_unknown_person_full_body(frame_to_save, track)
+                        logger.info(f"📸 Saved full body photo for unknown person {track.track_id}")
                     else:
                         logger.warning("No frame available to save full body for unknown person")
                 except Exception as e:
@@ -1830,11 +1520,17 @@ class AdvancedPersonTracker:
             
             # Ensure recording runs for full 2 minutes
             if CCTV['recording_enabled']:
+                logger.info(f"📹 Starting extended recording for verified unknown person {track.track_id}")
                 track.recording_end_time = current_time + 10
                 if not track.is_recording:
                     self._start_recording(track)
-            track.siren_played = True
+            # Mark person as unknown for red box display
             track.alert_sent = True
+            track.is_known = False  # Mark as unknown
+            track.is_trusted = False  # Mark as not trusted
+            track.identity = "Unknown"  # Set identity as unknown
+            track.verification_requested = False  # Stop verification process
+            logger.info(f"✅ Unknown person verification completed for track {track.track_id}")
     
     def _handle_unknown_person_timeout(self, track: PersonTrack, current_time: float):
         """Handle when person doesn't show face within timeout"""
@@ -1842,11 +1538,10 @@ class AdvancedPersonTracker:
             logger.warning(f"⏰ Person {track.track_id} didn't verify face - potential security concern")
             print(f"⚠️ Unverified person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Face verification required")
 
-            # Start a 2-minute alarm and recording to capture movement
-            if self.sound_system:
-                self.sound_system.start_alarm(duration_sec=120)
+            # Start recording to capture movement
             if CCTV['recording_enabled']:
-                track.recording_end_time = current_time + 120
+                initial_len = CCTV.get('unknown_initial_record_seconds', 10.0)
+                track.recording_end_time = current_time + initial_len
                 if not track.is_recording:
                     self._start_recording(track)
 
@@ -1903,11 +1598,11 @@ class AdvancedPersonTracker:
         current_hour = datetime.now().hour
 
         if 5 <= current_hour < 12:
-            return AUDIO['greeting_morning']
+            return "Good morning"
         elif 12 <= current_hour < 17:
-            return AUDIO['greeting_afternoon']
+            return "Good afternoon"
         else:
-            return AUDIO['greeting_evening']
+            return "Good evening"
 
     def _should_greet_person(self, track: PersonTrack, current_time: float) -> bool:
         """Check if person should be greeted (avoid spam)"""
@@ -1933,9 +1628,23 @@ class AdvancedPersonTracker:
         greeting = self._get_time_based_greeting()
         logger.info(f"👋 Greeting {person_name}: {greeting}")
 
-        # Use hardware manager for greeting if available
-        if self.hardware_manager:
-            self.hardware_manager.greet_person(person_name)
+        # Use sound system for greeting if available
+        if self.cctv_system:
+            # Play both time-based greeting and welcome message with priority
+            self.cctv_system.play_priority_sound('time_based_greeting')
+            self.cctv_system.play_priority_sound('known_person_greeting', name=person_name)
+        elif self.sound_messages:
+            try:
+                # Play both time-based greeting and welcome message
+                self.sound_messages.time_based_greeting()
+                self.sound_messages.known_person_greeting(person_name)
+            except Exception as e:
+                logger.warning(f"Sound greeting not available: {e}")
+        elif self.hardware_manager:
+            try:
+                self.hardware_manager.greet_person(person_name)
+            except Exception as e:
+                logger.warning(f"Hardware greeting not available: {e}")
         else:
             # Fallback to text output
             print(f"{greeting}, {person_name}!")
@@ -1952,11 +1661,21 @@ class AdvancedPersonTracker:
 
         logger.info(f"🎉 Welcoming back {person_name}")
 
-        # Use hardware manager for welcome message if available
-        if self.hardware_manager:
-            self.hardware_manager.welcome_back(person_name)
+        # Use sound system for welcome message if available
+        if self.cctv_system:
+            self.cctv_system.play_background_sound('welcome_back', name=person_name)
+        elif self.sound_messages:
+            try:
+                self.sound_messages.welcome_back(person_name)
+            except Exception as e:
+                logger.warning(f"Sound welcome not available: {e}")
+        elif self.hardware_manager:
+            try:
+                self.hardware_manager.welcome_back(person_name)
+            except Exception as e:
+                logger.warning(f"Hardware welcome not available: {e}")
         else:
-            print(f"{AUDIO['welcome_back']}, {person_name}!")
+            print(f"Welcome back, {person_name}!")
     
     def _needs_reverification(self, track: PersonTrack, current_time: float) -> bool:
         """Check if trusted person needs re-verification"""
@@ -2107,9 +1826,9 @@ class AdvancedPersonTracker:
                     status = f"COOLDOWN ({track.verification_attempts}/{track.max_verification_attempts}) ({cooldown_remaining:.1f}s)"
                 else:
                     status = f"VERIFY FACE ({track.verification_attempts}/{track.max_verification_attempts}) ({timeout_remaining:.1f}s)"
-            elif not track.is_known and track.siren_played:
-                # Unknown person verified as unknown
-                color = (0, 0, 255)  # Red
+            elif not track.is_known and track.alert_sent:
+                # Unknown person verified as unknown - RED BOX
+                color = (0, 0, 255)  # Bright red
                 status = "🚨 UNKNOWN PERSON!"
             elif track.needs_face_check:
                 # New person, needs face check
@@ -2129,10 +1848,18 @@ class AdvancedPersonTracker:
                 color = (0, 0, 180)  # Dark red
                 status = "UNKNOWN"
             
-            # Line thickness based on track age
-            line_thickness = 3 if track.verification_requested else 2
-            if track_age > 2.0:
-                line_thickness = 1
+            # Line thickness based on track status
+            if not track.is_known and track.alert_sent:
+                # Thick red box for unknown persons
+                line_thickness = 5
+            elif track.verification_requested:
+                # Medium thickness for verification
+                line_thickness = 3
+            else:
+                # Default thickness
+                line_thickness = 2
+                if track_age > 2.0:
+                    line_thickness = 1
             
             # Draw person bounding box
             cv2.rectangle(annotated, (x, y), (x + w, y + h), color, line_thickness)
@@ -2167,7 +1894,7 @@ class AdvancedPersonTracker:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             
             # Only show alert if person is still unknown/unverified
-            if track.siren_played and not track.is_known:
+            if track.alert_sent and not track.is_known:
                 cv2.putText(annotated, "🚨 ALERT", (x + w - 50, y + 15), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
         
@@ -2255,13 +1982,11 @@ if __name__ == "__main__":
         tracker = AdvancedPersonTracker()
         
         logger.info("🎯 Smart Security System Ready!")
-        logger.info("🔊 Sound alerts: " + ("Enabled" if tracker.sound_system.sound_enabled else "Disabled"))
-        logger.info("🗣️ Voice alerts: " + ("Enabled" if tracker.sound_system.voice_enabled else "Disabled"))
         logger.info("")
         logger.info("🛡️ Security Features:")
         logger.info("  ✅ Smart person tracking with memory")
         logger.info("  ✅ Face verification requests")
-        logger.info("  ✅ Unknown person alerts with siren")
+        logger.info("  ✅ Unknown person alerts (visual)")
         logger.info("  ✅ Trusted person memory (5 minutes)")
         logger.info("")
         logger.info("🎮 Controls:")
@@ -2269,7 +1994,6 @@ if __name__ == "__main__":
         logger.info("  - S: Save current frame")
         logger.info("  - R: Reset all tracks")
         logger.info("  - C: Clean stale tracks")
-        logger.info("  - M: Mute/Unmute sounds")
         logger.info("  - SPACE: Force cleanup")
         
         frame_count = 0
@@ -2353,22 +2077,7 @@ if __name__ == "__main__":
             elif key == ord(' '):  # Space - Force cleanup
                 tracker.tracker.frames_without_detection = tracker.tracker.max_disappeared + 1
                 logger.info("🧹 Forced track cleanup on next frame")
-            elif key == ord('m') or key == ord('M'):  # Mute/Unmute
-                if tracker.sound_system.sound_enabled or tracker.sound_system.voice_enabled:
-                    # Toggle mute
-                    old_sound = tracker.sound_system.sound_enabled
-                    old_voice = tracker.sound_system.voice_enabled
-                    
-                    tracker.sound_system.sound_enabled = not (old_sound or old_voice)
-                    tracker.sound_system.voice_enabled = not (old_sound or old_voice)
-                    
-                    if tracker.sound_system.sound_enabled:
-                        logger.info("🔊 Sound alerts enabled")
-                    else:
-                        logger.info("🔇 Sound alerts muted")
-                        tracker.sound_system.stop_all_sounds()
-                else:
-                    logger.info("🔇 Sound system not available")
+            # Sound controls removed
         
         logger.info("👋 Advanced Person Tracking System stopped")
         

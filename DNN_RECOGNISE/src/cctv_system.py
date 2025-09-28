@@ -13,12 +13,10 @@ import time
 import threading
 from datetime import datetime
 from typing import Optional, Tuple, List
-import platform
-import shutil
-import subprocess
+# Unused imports removed
 
 from settings.settings import (
-    CAMERA, CCTV, AUDIO, HARDWARE, PATHS
+    CAMERA, CCTV, HARDWARE, PATHS
 )
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,16 +42,14 @@ except ImportError:
     TRACKER_AVAILABLE = False
     logger.error("❌ Advanced person tracker not available")
 
-
-# Raspberry Pi / Linux voice support (aligned with advanced_person_tracker)
+# Try to import sound system
 try:
-    if platform.system() == 'Linux' and shutil.which('espeak-ng') is not None:
-        RPI_SPEECH_AVAILABLE = True
-        logger.info("🗣️ Linux/Raspberry Pi speech available via espeak-ng (main)")
-    else:
-        RPI_SPEECH_AVAILABLE = False
-except Exception:
-    RPI_SPEECH_AVAILABLE = False
+    from sound_system import get_sound_system, get_messages
+    SOUND_AVAILABLE = True
+    logger.info("🔊 Sound system available")
+except ImportError:
+    SOUND_AVAILABLE = False
+    logger.warning("🔊 Sound system not available")
 
 class CCTVSystem:
     """Main CCTV System integrating all components"""
@@ -69,6 +65,23 @@ class CCTVSystem:
             raise ImportError("Advanced person tracker is required for CCTV system")
 
         self.person_tracker = AdvancedPersonTracker()
+        
+        # Set CCTV system reference in person tracker for background sound
+        self.person_tracker.set_cctv_system(self)
+
+        # Initialize sound system (background)
+        if SOUND_AVAILABLE:
+            try:
+                self.sound_system = get_sound_system()
+                self.sound_messages = get_messages()
+                logger.info("🔊 Sound system initialized for background operation")
+            except Exception as e:
+                logger.error(f"Failed to initialize sound system: {e}")
+                self.sound_system = None
+                self.sound_messages = None
+        else:
+            self.sound_system = None
+            self.sound_messages = None
 
         # System state
         self.running = False
@@ -85,17 +98,11 @@ class CCTVSystem:
         self.camera = None
 
         logger.info("✅ CCTV System initialized successfully")
-        
-        # Play welcome message on boot
-        self._play_welcome_message()
-        
-        # Test sound system
-        self._test_sound_system()
 
     def initialize_camera(self) -> bool:
         """Initialize camera with enhanced settings"""
         try:
-            # Try to use picamera2 first
+            # Try to use `picamera2` first
             try:
                 from picamera2 import Picamera2, Preview
                 self.camera = Picamera2()
@@ -279,66 +286,70 @@ class CCTVSystem:
                     self.hardware_manager.set_system_status('ready')
             logger.info(f"👥 Guest mode {'activated' if current_guest_mode else 'deactivated'}")
 
-    def _play_welcome_message(self):
-        """Play welcome message on system boot"""
-        try:
-            logger.info("🎵 Playing welcome message...")
-            
-            # Check if we have access to the person tracker's sound system
-            if hasattr(self.person_tracker, 'sound_system'):
-                sound_system = self.person_tracker.sound_system
-                
-                if sound_system.voice_enabled:
-                    # Use the person tracker's sound system for voice
-                    sound_system._speak_text(0, "Welcome to JeCH AeroTech")
-                elif sound_system.sound_enabled:
-                    # Fallback to beep if voice is not available
-                    sound_system._play_windows_beep(0)
-                else:
-                    logger.info("🔇 Audio system not available")
-            else:
-                # Fallback: try direct espeak-ng call
-                if RPI_SPEECH_AVAILABLE:
-                    try:
-                        subprocess.run(['espeak-ng', '-s', '163', '-p', '55', 'Welcome to JeCH AeroTech'], 
-                                     timeout=5, capture_output=True)
-                        logger.info("🗣️ Welcome message played via espeak-ng")
-                    except Exception as e:
-                        logger.warning(f"Failed to play welcome message: {e}")
-                else:
-                    logger.info("🔇 No audio system available for welcome message")
-                    
-        except Exception as e:
-            logger.error(f"Error playing welcome message: {e}")
+    def play_background_sound(self, sound_type: str, **kwargs):
+        """Play sound in background thread to avoid blocking main CCTV process"""
+        if not self.sound_system or not self.sound_messages:
+            return
+        
+        def play_sound():
+            try:
+                if sound_type == 'person_detected':
+                    self.sound_messages.person_detected()
+                elif sound_type == 'face_verification_request':
+                    self.sound_messages.face_verification_request()
+                elif sound_type == 'face_verification_reminder':
+                    count = kwargs.get('count', 1)
+                    self.sound_messages.face_verification_reminder(count)
+                elif sound_type == 'unknown_person_alert':
+                    self.sound_messages.unknown_person_alert()
+                elif sound_type == 'security_breach':
+                    self.sound_messages.security_breach()
+                elif sound_type == 'known_person_greeting':
+                    name = kwargs.get('name', '')
+                    self.sound_messages.known_person_greeting(name)
+                elif sound_type == 'time_based_greeting':
+                    self.sound_messages.time_based_greeting()
+                elif sound_type == 'welcome_back':
+                    name = kwargs.get('name', '')
+                    self.sound_messages.welcome_back(name)
+                elif sound_type == 'guest_mode_activated':
+                    host_name = kwargs.get('host_name', '')
+                    self.sound_messages.guest_mode_activated(host_name)
+                elif sound_type == 'guest_mode_expired':
+                    self.sound_messages.guest_mode_expired()
+                elif sound_type == 'verification_timeout':
+                    self.sound_messages.verification_timeout()
+            except Exception as e:
+                logger.error(f"Error playing background sound {sound_type}: {e}")
+        
+        # Start sound in background thread
+        sound_thread = threading.Thread(target=play_sound, daemon=True)
+        sound_thread.start()
 
-    def _test_sound_system(self):
-        """Test the sound system to ensure it's working"""
-        try:
-            logger.info("🔊 Testing sound system...")
-            
-            if hasattr(self.person_tracker, 'sound_system'):
-                sound_system = self.person_tracker.sound_system
-                logger.info(f"  - Sound system available: {sound_system is not None}")
-                logger.info(f"  - Sound enabled: {sound_system.sound_enabled}")
-                logger.info(f"  - Voice enabled: {sound_system.voice_enabled}")
-                logger.info(f"  - Use espeak-ng: {sound_system.use_espeak_ng}")
-                
-                # Test a simple beep
-                if sound_system.sound_enabled:
-                    logger.info("🔊 Testing beep...")
-                    sound_system._play_windows_beep(0)
-                    time.sleep(0.5)
-                
-                # Test voice
-                if sound_system.voice_enabled:
-                    logger.info("🗣️ Testing voice...")
-                    sound_system._speak_text(0, "Sound system test")
-                    time.sleep(1)
-            else:
-                logger.warning("🔇 No sound system found in person tracker")
-                
-        except Exception as e:
-            logger.error(f"Error testing sound system: {e}")
+    def play_priority_sound(self, sound_type: str, **kwargs):
+        """Play priority sound that interrupts current speech"""
+        if not self.sound_system or not self.sound_messages:
+            return
+        
+        def play_priority_sound():
+            try:
+                if sound_type == 'unknown_person_alert':
+                    self.sound_messages.unknown_person_alert()
+                elif sound_type == 'security_breach':
+                    self.sound_messages.security_breach()
+                elif sound_type == 'verification_timeout':
+                    self.sound_messages.verification_timeout()
+                elif sound_type == 'time_based_greeting':
+                    self.sound_messages.time_based_greeting()
+                elif sound_type == 'known_person_greeting':
+                    name = kwargs.get('name', '')
+                    self.sound_messages.known_person_greeting(name)
+            except Exception as e:
+                logger.error(f"Error playing priority sound {sound_type}: {e}")
+        
+        # Start priority sound in background thread
+        sound_thread = threading.Thread(target=play_priority_sound, daemon=True)
+        sound_thread.start()
 
     def cleanup(self):
         """Cleanup system resources"""
@@ -378,7 +389,7 @@ def main():
     logger.info("🚀 Starting Raspberry Pi CCTV Camera System")
     logger.info("=" * 60)
     logger.info("📷 Advanced Person Tracking with Face Recognition")
-    logger.info("🔊 Smart Audio Alerts and Time-based Greetings")
+    logger.info("🔍 Visual Security Alerts and Time-based Greetings")
     logger.info("💡 Motion Detection with LED Control")
     logger.info("📹 Recording of Unknown Persons")
     logger.info("=" * 60)

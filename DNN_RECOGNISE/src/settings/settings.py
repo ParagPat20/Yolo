@@ -99,12 +99,9 @@ SECURITY = {
     'unknown_person_alert': True,  # Enable alerts for unknown persons
     'danger_alert_message': "🚨 DANGER: Unknown person detected!",
     'log_unknown_faces': True,  # Save unknown faces for analysis
-    'alert_sound': True,  # Enable sound alerts (requires pygame)
-    'voice_alerts': True,  # Enable voice alerts (requires pyttsx3)
     'alert_email': False,  # Enable email alerts (requires configuration)
     'max_unknown_faces_stored': 1000,  # Maximum unknown faces to store
     'verification_timeout': 15.0,  # Seconds to wait for face verification (increased)
-    'siren_duration': 3.0,  # Seconds to play siren for unknown faces
     'trusted_person_memory': 600.0,  # Seconds to remember trusted person without face (10 minutes)
 }
 
@@ -115,12 +112,6 @@ HARDWARE = {
     'led_green_pin': 22,  # GPIO pin for green status LED
     'led_yellow_pin': 23,  # GPIO pin for yellow status LED
     'led_red_pin': 24,  # GPIO pin for red status LED
-    'bt_speaker_mac': 'XX:XX:XX:XX:XX:XX',  # Bluetooth speaker MAC address
-    'bt_speaker_name': 'CCTV_Speaker',  # Bluetooth speaker name
-    # If your Raspberry Pi is already paired and default audio is set,
-    # skip connection attempts and play via system audio (ALSA/PulseAudio)
-    'bt_skip_connect': True,
-    'bt_use_system_audio': True,
 }
 
 # CCTV System Settings
@@ -136,9 +127,11 @@ CCTV = {
     'greeting_enabled': True,  # Enable time-based greetings
     'greeting_cooldown': 300.0,  # Seconds between greetings for same person
     'verification_timeout': 15.0,  # Time to wait for face verification before alarm (seconds)
-    'unknown_timeout': 4.0,  # Time before marking as unknown person (seconds)
+    'unknown_timeout': 20.0,  # Time before marking as unknown person (seconds)
     'max_verification_attempts': 3,  # Maximum verification attempts
     'verification_cooldown': 2.0,  # Cooldown between verification attempts
+    # Recording behavior
+    'unknown_initial_record_seconds': 600.0,  # Initial recording length for unknown detection (10 minutes)
     # Guest Mode Settings
     'guest_mode_enabled': True,  # Enable context-aware guest mode
     'guest_mode_duration': 900.0,  # Guest mode duration in seconds (15 minutes)
@@ -147,7 +140,7 @@ CCTV = {
     'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
 }
 
-# Audio Settings
+# Audio Settings (Visual-only messages)
 AUDIO = {
     'greeting_morning': 'Good morning',
     'greeting_afternoon': 'Good afternoon',
@@ -157,22 +150,39 @@ AUDIO = {
     'welcome_back': 'Welcome back',
     'guest_mode_message': "I've noticed you have a guest. System is now in guest mode for the next 15 minutes",
     'guest_mode_reverted': 'Guest mode expired. Reverting to normal security protocols',
-    'alarm_sound_file': 'sounds/alarm.mp3',  # Alarm sound file path
-    'greeting_sound_enabled': True,  # Play sound with greetings
-    'alert_sound_enabled': True,  # Play sound with alerts
+    'unknown_timeout': 'Unknown person timeout. Please verify face',
+    'alarm_sound_path': 'sounds/alarm.mp3',
+    'verification_beep_path': 'sounds/verification_beep.mp3',
+    'use_mp3_sounds': True,  # Enable MP3 sound playback
+    'mp3_player_linux': 'mpg123',  # MP3 player for Linux
+    'mp3_player_windows': 'powershell'  # Fallback for Windows
 }
 
-# Voice Settings for Text-to-Speech (Female Voice)
-VOICE = {
-    'engine': 'espeak-ng',  # Options: 'espeak-ng', 'festival', 'auto'
-    'gender': 'female',  # Options: 'female', 'male'
-    'espeak_voice': 'en+f3',  # espeak-ng female voice (en+f1, en+f2, en+f3, en+f4)
-    'festival_voice': 'cmu_us_slt_cg',  # Festival female voice
-    'speech_rate': 163,  # Speech rate (words per minute)
-    'pitch': 55,  # Pitch adjustment (0-100, 50 = natural female)
-    'volume': 50,  # Volume (0-100)
-    'language': 'en',  # Language code
+# Sound System Settings
+SOUND_SYSTEM = {
+    'enabled': True,  # Enable/disable sound system
+    'language': 'en',  # Default language: 'en' for English, 'gu' for Gujarati
+    'voice_parameters': {
+        'gujarati': {
+            'speed': 163,      # Speech speed (50-300)
+            'pitch': 55,       # Voice pitch (0-99, female cute girl voice)
+            'volume': 100,     # Volume (0-200)
+            'amplitude': 100   # Amplitude (0-200)
+        },
+        'english': {
+            'speed': 150,      # Speech speed (50-300)
+            'pitch': 50,       # Voice pitch (0-99, female voice)
+            'volume': 100,     # Volume (0-200)
+            'amplitude': 100   # Amplitude (0-200)
+        }
+    },
+    'windows_speech_fallback': True,  # Use Windows speech fallbacks when espeak-ng unavailable
+    'speech_queue_enabled': True,  # Enable speech queue system
+    'priority_speech_enabled': True,  # Enable priority speech (interrupts current speech)
+    'auto_language_detection': False,  # Auto-detect language from system locale
 }
+
+# Voice Settings removed (sound system disabled)
 
 # Legacy compatibility settings
 CONFIDENCE_THRESHOLD = 35  # For LBPH compatibility
@@ -187,7 +197,7 @@ OBJECT_DETECTION = {
 
 # Legacy tracking settings (kept for backward compatibility)
 TRACKING = {
-    'tracking_duration': 3,  # Duration in seconds to track a recognized face/object
+    'tracking_duration': 2,  # Duration in seconds to track a recognized face/object
     'unknown_tracking_duration': 0.5,  # Shorter tracking for unknown faces (allows re-recognition)
     'max_distance_threshold': 100,  # Maximum distance between face/object positions to consider it the same
     'recognition_cooldown': 1.0,  # Minimum time between recognition attempts (seconds)
