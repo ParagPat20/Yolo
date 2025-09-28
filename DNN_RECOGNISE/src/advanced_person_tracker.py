@@ -1442,21 +1442,30 @@ class AdvancedPersonTracker:
                 if not track.is_recording:
                     self._start_recording(track)
 
-            # Play alarm sound
-            if self.cctv_system:
-                self.cctv_system.play_priority_sound('unknown_person_alert')
-            elif self.sound_messages:
-                logger.info(f"🔊 Playing sound system alarm for unknown person {track.track_id}")
-                self.sound_messages.unknown_person_alert()
+            # Check if alarm is already playing
+            alarm_already_playing = False
+            if self.sound_system and self.sound_system.is_alarm_playing():
+                alarm_already_playing = True
+                logger.info("🚨 Alarm already playing - skipping new alarm")
             
-            # Play MP3 alarm sound
-            if SOUND_PLAYER_AVAILABLE:
-                try:
-                    from sound_player import play_alarm
-                    play_alarm()
-                    logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
-                except Exception as e:
-                    logger.warning(f"Alarm sound not available: {e}")
+            # Play alarm sound only if not already playing
+            if not alarm_already_playing:
+                if self.cctv_system:
+                    self.cctv_system.play_priority_sound('unknown_person_alert')
+                elif self.sound_messages:
+                    logger.info(f"🔊 Playing sound system alarm for unknown person {track.track_id}")
+                    self.sound_messages.unknown_person_alert()
+                
+                # Play MP3 alarm sound
+                if SOUND_PLAYER_AVAILABLE:
+                    try:
+                        from sound_player import play_alarm
+                        play_alarm(self.sound_system)  # Pass sound system for alarm management
+                        logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
+                    except Exception as e:
+                        logger.warning(f"Alarm sound not available: {e}")
+            else:
+                logger.info("🚨 Alarm already active - not starting new alarm")
             
             if self.hardware_manager:
                 logger.info(f"🔴 Setting hardware status to 'alert' for unknown person {track.track_id}")
@@ -1488,14 +1497,22 @@ class AdvancedPersonTracker:
             print(f"\n🚨 ALERT! Unknown face detected at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 SECURITY BREACH - Unauthorized person identified!")
             
-            # Play MP3 alarm sound
-            if SOUND_PLAYER_AVAILABLE:
+            # Check if alarm is already playing
+            alarm_already_playing = False
+            if self.sound_system and self.sound_system.is_alarm_playing():
+                alarm_already_playing = True
+                logger.info("🚨 Alarm already playing - skipping new alarm")
+            
+            # Play MP3 alarm sound only if not already playing
+            if not alarm_already_playing and SOUND_PLAYER_AVAILABLE:
                 try:
                     from sound_player import play_alarm
-                    play_alarm()
+                    play_alarm(self.sound_system)  # Pass sound system for alarm management
                     logger.info(f"🚨 Extended alarm started for verified unknown person {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Alarm sound not available: {e}")
+            elif alarm_already_playing:
+                logger.info("🚨 Alarm already active - not starting new alarm")
             
             # Hardware alarm if available
             if self.hardware_manager:
@@ -1629,6 +1646,17 @@ class AdvancedPersonTracker:
 
         greeting = self._get_time_based_greeting()
         logger.info(f"👋 Greeting {person_name}: {greeting}")
+
+        # Stop any ongoing alarm when known person is detected
+        if self.sound_system and self.sound_system.is_alarm_playing():
+            logger.info("🔇 Stopping alarm - known person detected")
+            self.sound_system.stop_alarm()
+        
+        # Also stop sound player alarm if available
+        if hasattr(self, 'sound_player') and self.sound_player:
+            if self.sound_player.is_alarm_active():
+                logger.info("🔇 Stopping sound player alarm - known person detected")
+                self.sound_player.stop_alarm()
 
         # Use sound system for greeting if available
         if self.cctv_system:

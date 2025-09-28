@@ -75,7 +75,7 @@ class SoundPlayer:
         self.alarm_thread.start()
         logger.info("🚨 Extended alarm started")
     
-    def _play_extended_alarm(self, alarm_path: str):
+    def _play_extended_alarm(self, alarm_path: str, sound_system=None):
         """Play alarm sound for extended duration"""
         duration_minutes = AUDIO.get('alarm_duration_minutes', 2)
         loop_interval = AUDIO.get('alarm_loop_interval', 5)
@@ -108,6 +108,8 @@ class SoundPlayer:
                 break
         
         self.alarm_active = False
+        if sound_system:
+            sound_system.stop_alarm()
         logger.info("🚨 Extended alarm completed")
     
     def stop_alarm(self):

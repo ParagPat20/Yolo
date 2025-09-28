@@ -363,8 +363,8 @@ class SoundSystem:
         try:
             logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
             
-            # Generate audio using persistent voice
-            audio_data = self.piper_voice.synthesize(text, length_scale=length_scale, noise_scale=noise_scale)
+            # Generate audio using persistent voice (Piper doesn't support these parameters in synthesize)
+            audio_data = self.piper_voice.synthesize(text)
             
             # Play audio using aplay
             piper_config = SOUND_SYSTEM.get('piper', {})
