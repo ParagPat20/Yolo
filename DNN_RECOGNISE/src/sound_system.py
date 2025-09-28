@@ -340,12 +340,9 @@ class SoundSystem:
             noise_scale = piper_config.get('noise', 0.667)
             length_scale = piper_config.get('length_penalty', 1.0)
             
-            # Try to use persistent voice first (much faster)
-            if self.piper_voice is not None:
-                self._speak_with_persistent_piper(text, noise_scale, length_scale)
-            else:
-                # Fallback to command-line Piper
-                self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
+            # Use command-line Piper (more reliable than persistent voice)
+            # TODO: Fix persistent Piper AudioChunk handling
+            self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
             
         except Exception as e:
             logger.error(f"❌ Error with Piper: {e}")
@@ -367,7 +364,26 @@ class SoundSystem:
             audio_generator = self.piper_voice.synthesize(text)
             
             # Convert generator to bytes by extracting data from each AudioChunk
-            audio_data = b''.join(chunk.audio for chunk in audio_generator)
+            # Based on Piper documentation, AudioChunk should have audio data
+            audio_chunks = []
+            for chunk in audio_generator:
+                # Try to get the raw audio data
+                try:
+                    # Most common attribute names for audio data
+                    if hasattr(chunk, 'audio'):
+                        audio_chunks.append(chunk.audio)
+                    elif hasattr(chunk, 'data'):
+                        audio_chunks.append(chunk.data)
+                    elif hasattr(chunk, 'samples'):
+                        audio_chunks.append(chunk.samples)
+                    else:
+                        # If chunk is already bytes-like, use it directly
+                        audio_chunks.append(bytes(chunk))
+                except Exception as e:
+                    logger.warning(f"Could not extract audio from chunk: {e}")
+                    continue
+            
+            audio_data = b''.join(audio_chunks)
             
             # Play audio using aplay
             piper_config = SOUND_SYSTEM.get('piper', {})
