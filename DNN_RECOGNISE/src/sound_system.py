@@ -205,28 +205,26 @@ class SoundSystem:
     def _initialize_piper_voice(self):
         """Initialize persistent Piper voice for faster speech"""
         try:
-            # Get Piper configuration
             piper_config = SOUND_SYSTEM.get('piper', {})
-            model_path = piper_config.get('models', {}).get(self.language, 
-                                                          piper_config.get('model_path', ''))
+            model_path = piper_config.get('models', {}).get(self.language, piper_config.get('model_path', ''))
             
             if not os.path.exists(model_path):
                 logger.warning(f"⚠️ Piper model not found: {model_path}")
                 return
             
-            # Try to import Piper (if available as Python package)
             try:
-                from piper import PiperVoice
+                from piper.voice import PiperVoice
                 logger.info("🔊 Loading Piper TTS model...")
                 self.piper_voice = PiperVoice.load(model_path)
                 
-                # Pre-warm the model with a test synthesis to ensure it's fully loaded
+                # Pre-warm the model by synthesizing AND consuming the audio data
                 logger.info("🔊 Pre-warming Piper model for faster speech...")
-                test_audio = self.piper_voice.synthesize("Test")
+                test_generator = self.piper_voice.synthesize("Ready")
+                _ = b"".join(list(test_generator)) # This consumes the generator
                 logger.info("✅ Piper model pre-warmed and ready for immediate use")
                 
             except ImportError:
-                logger.info("🔊 Using command-line Piper (no persistent voice)")
+                logger.info("🔊 piper-tts library not installed. Using command-line Piper.")
                 self.piper_voice = None
             except Exception as e:
                 logger.warning(f"⚠️ Failed to initialize persistent Piper voice: {e}")
@@ -376,38 +374,7 @@ class SoundSystem:
                 next_text = self.sound_queue.pop(0)
                 logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
                 self._speak_immediately(next_text)
-    
-    def _speak_with_persistent_piper(self, text: str, noise_scale: float, length_scale: float):
-        """Speak using persistent Piper voice (fastest method)"""
-        try:
-            logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
-            
-            # Generate audio using persistent voice (pre-loaded model)
-            # Note: Current Piper API doesn't support length_scale/noise_scale in synthesize()
-            audio_data = self.piper_voice.synthesize(text)
-            
-            # Get audio configuration
-            piper_config = SOUND_SYSTEM.get('piper', {})
-            sample_rate = piper_config.get('sample_rate', 22050)
-            channels = piper_config.get('channels', 1)
-            audio_format = piper_config.get('format', 'S16_LE')
-            
-            # Use aplay to play the audio data (non-blocking)
-            cmd = ['aplay', '-r', str(sample_rate), '-f', audio_format, '-c', str(channels), '-']
-            
-            # Start aplay process and feed audio data
-            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=None, stderr=None)
-            self.current_process.stdin.write(audio_data)
-            self.current_process.stdin.close()
-            
-            # Don't wait for completion - let it play in background
-            logger.info(f"🔊 Started persistent Piper speech: {text[:50]}...")
-                
-        except Exception as e:
-            logger.error(f"❌ Error with persistent Piper: {e}")
-            # Fallback to command-line method
-            self._speak_with_piper_command(text, None, noise_scale, length_scale)
-    
+
     def _speak_with_piper_command(self, text: str, model_path: str, noise_scale: float, length_scale: float):
         """Speak using command-line Piper (fallback method)"""
         try:
