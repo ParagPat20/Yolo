@@ -55,10 +55,10 @@ def test_piper_with_parameters():
         # Escape text for shell safety
         safe_text = shlex.quote(text)
         
-        # Build command with all parameters
+        # Build command with all parameters (correct Piper parameters)
         cmd = [
             'bash', '-c',
-            f'echo {safe_text} | piper --model {model_path} --speed 1.0 --noise 0.667 --length_penalty 1.0 --output-raw | aplay -r 22050 -f S16_LE -c 1 -'
+            f'echo {safe_text} | piper --model {model_path} --length-scale 1.0 --noise-scale 0.667 --output-raw | aplay -r 22050 -f S16_LE -c 1 -'
         ]
         
         logger.info(f"🔊 Testing Piper with parameters: {text}")

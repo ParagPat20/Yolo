@@ -278,8 +278,8 @@ class SoundSystem:
             model_path = piper_config.get('models', {}).get(self.language, 
                                                           piper_config.get('model_path', ''))
             speed = piper_config.get('speed', 1.0)
-            noise = piper_config.get('noise', 0.667)
-            length_penalty = piper_config.get('length_penalty', 1.0)
+            noise_scale = piper_config.get('noise', 0.667)
+            length_scale = piper_config.get('length_penalty', 1.0)
             
             # Escape text for shell safety
             safe_text = shlex.quote(text)
@@ -290,21 +290,22 @@ class SoundSystem:
             channels = piper_config.get('channels', 1)
             audio_format = piper_config.get('format', 'S16_LE')
             
-            # Build Piper command with audio output
+            # Build Piper command with correct parameters
             if use_aplay:
                 cmd = [
                     'bash', '-c',
-                    f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty} --output-raw | aplay -r {sample_rate} -f {audio_format} -c {channels} -'
+                    f'echo {safe_text} | piper --model {model_path} --length-scale {length_scale} --noise-scale {noise_scale} --output-raw | aplay -r {sample_rate} -f {audio_format} -c {channels} -'
                 ]
             else:
                 # Fallback to direct piper output
                 cmd = [
                     'bash', '-c',
-                    f'echo {safe_text} | piper --model {model_path} --speed {speed} --noise {noise} --length_penalty {length_penalty}'
+                    f'echo {safe_text} | piper --model {model_path} --length-scale {length_scale} --noise-scale {noise_scale}'
                 ]
             
-            # Execute command
-            self.current_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Execute command (don't capture stdout/stderr for audio output)
+            logger.info(f"🔊 Speaking with Piper: {text[:50]}...")
+            self.current_process = subprocess.Popen(cmd)
             self.current_process.wait()
             
             logger.info(f"🔊 Spoke with Piper: {text[:50]}...")
