@@ -213,8 +213,7 @@ class SoundSystem:
                 return
             
             try:
-                # You'll need to import AudioChunk at the top of your file
-                from piper.voice import PiperVoice, AudioChunk
+                from piper.voice import PiperVoice
                 logger.info("🔊 Loading Piper TTS model...")
                 self.piper_voice = PiperVoice.load(model_path)
                 
@@ -222,7 +221,7 @@ class SoundSystem:
                 logger.info("🔊 Pre-warming Piper model for faster speech...")
                 test_generator = self.piper_voice.synthesize("Ready")
                 # --- THE FIX IS HERE ---
-                _ = b"".join([chunk.audio for chunk in test_generator])
+                _ = b"".join([chunk.samples for chunk in test_generator])
                 logger.info("✅ Piper model pre-warmed and ready for immediate use")
                 
             except ImportError:
@@ -235,7 +234,7 @@ class SoundSystem:
         except Exception as e:
             logger.error(f"❌ Error initializing Piper voice: {e}")
             self.piper_voice = None
-            
+
     def _ensure_piper_ready(self):
         """Ensure Piper model is fully ready for immediate use"""
         if self.piper_voice is not None:
@@ -390,7 +389,7 @@ class SoundSystem:
             )
             
             # --- THE FIX IS HERE ---
-            audio_data = b"".join([chunk.audio for chunk in audio_generator])
+            audio_data = b"".join([chunk.samples for chunk in audio_generator])
             
             # Get audio configuration from the loaded voice model for accuracy
             sample_rate = self.piper_voice.config.sample_rate
@@ -411,7 +410,7 @@ class SoundSystem:
             piper_config = SOUND_SYSTEM.get('piper', {})
             model_path = piper_config.get('models', {}).get(self.language, piper_config.get('model_path', ''))
             self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
-        
+            
     def _speak_with_piper_command(self, text: str, model_path: str, noise_scale: float, length_scale: float):
         """Speak using command-line Piper (fallback method)"""
         try:
