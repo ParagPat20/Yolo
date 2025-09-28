@@ -30,3 +30,5 @@ Thumbs.db
 /detection_results/
 
 /DNN_RECOGNISE/models/arcface_r100.onnx
+/DNN_RECOGNISE/recordings/
+/DNN_RECOGNISE/unknown_faces/
