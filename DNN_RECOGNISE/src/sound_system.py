@@ -366,8 +366,8 @@ class SoundSystem:
             # Generate audio using persistent voice (Piper doesn't support these parameters in synthesize)
             audio_generator = self.piper_voice.synthesize(text)
             
-            # Convert generator to bytes
-            audio_data = b''.join(audio_generator)
+            # Convert generator to bytes by extracting data from each AudioChunk
+            audio_data = b''.join(chunk.audio for chunk in audio_generator)
             
             # Play audio using aplay
             piper_config = SOUND_SYSTEM.get('piper', {})
