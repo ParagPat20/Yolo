@@ -69,6 +69,8 @@ class SoundSystem:
         self.current_process: Optional[subprocess.Popen] = None
         self.use_winsound = False
         self.tts_system = None  # Current TTS system being used
+        self.piper_voice = None  # Persistent Piper voice instance
+        self.alarm_active = False  # Track if alarm is currently playing
         
         # Use language from parameter or settings
         if language is None:
@@ -96,6 +98,10 @@ class SoundSystem:
         
         # Initialize TTS system with fallback chain
         self._initialize_tts_system()
+        
+        # Initialize persistent voice if using Piper
+        if self.tts_system == 'piper':
+            self._initialize_piper_voice()
         
         if self.is_enabled:
             lang_name = "Gujarati" if self.language == 'gu' else "English"
@@ -194,6 +200,60 @@ class SoundSystem:
         """Check if winsound is available"""
         return WINSOUND_AVAILABLE and platform.system() == 'Windows'
     
+    def _initialize_piper_voice(self):
+        """Initialize persistent Piper voice for faster speech"""
+        try:
+            # Get Piper configuration
+            piper_config = SOUND_SYSTEM.get('piper', {})
+            model_path = piper_config.get('models', {}).get(self.language, 
+                                                          piper_config.get('model_path', ''))
+            
+            if not os.path.exists(model_path):
+                logger.warning(f"⚠️ Piper model not found: {model_path}")
+                return
+            
+            # Try to import Piper (if available as Python package)
+            try:
+                from piper import PiperVoice
+                logger.info("🔊 Initializing persistent Piper voice...")
+                self.piper_voice = PiperVoice.load(model_path)
+                logger.info("✅ Persistent Piper voice initialized")
+            except ImportError:
+                logger.info("🔊 Using command-line Piper (no persistent voice)")
+                self.piper_voice = None
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize persistent Piper voice: {e}")
+                self.piper_voice = None
+                
+        except Exception as e:
+            logger.error(f"❌ Error initializing Piper voice: {e}")
+            self.piper_voice = None
+    
+    def is_alarm_playing(self):
+        """Check if alarm is currently playing"""
+        return self.alarm_active
+    
+    def stop_alarm(self):
+        """Stop any ongoing alarm"""
+        if self.alarm_active:
+            try:
+                # Stop current process if it's an alarm
+                if self.current_process and self.current_process.poll() is None:
+                    self.current_process.terminate()
+                    self.current_process.wait(timeout=5)
+                self.alarm_active = False
+                logger.info("🔇 Alarm stopped")
+            except Exception as e:
+                logger.error(f"❌ Error stopping alarm: {e}")
+    
+    def start_alarm(self):
+        """Start alarm if not already playing"""
+        if not self.alarm_active:
+            self.alarm_active = True
+            logger.info("🚨 Alarm started")
+        else:
+            logger.info("🚨 Alarm already playing - skipping")
+    
     def _build_espeak_command(self, text: str) -> list:
         """Build espeak-ng command with parameters"""
         import platform
@@ -277,14 +337,75 @@ class SoundSystem:
             piper_config = SOUND_SYSTEM.get('piper', {})
             model_path = piper_config.get('models', {}).get(self.language, 
                                                           piper_config.get('model_path', ''))
-            speed = piper_config.get('speed', 1.0)
             noise_scale = piper_config.get('noise', 0.667)
             length_scale = piper_config.get('length_penalty', 1.0)
+            
+            # Try to use persistent voice first (much faster)
+            if self.piper_voice is not None:
+                self._speak_with_persistent_piper(text, noise_scale, length_scale)
+            else:
+                # Fallback to command-line Piper
+                self._speak_with_piper_command(text, model_path, noise_scale, length_scale)
+            
+        except Exception as e:
+            logger.error(f"❌ Error with Piper: {e}")
+        finally:
+            self.is_speaking = False
+            
+            # Process next in queue
+            if self.sound_queue:
+                next_text = self.sound_queue.pop(0)
+                logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
+                self._speak_immediately(next_text)
+    
+    def _speak_with_persistent_piper(self, text: str, noise_scale: float, length_scale: float):
+        """Speak using persistent Piper voice (fastest method)"""
+        try:
+            logger.info(f"🔊 Speaking with persistent Piper: {text[:50]}...")
+            
+            # Generate audio using persistent voice
+            audio_data = self.piper_voice.synthesize(text, length_scale=length_scale, noise_scale=noise_scale)
+            
+            # Play audio using aplay
+            piper_config = SOUND_SYSTEM.get('piper', {})
+            sample_rate = piper_config.get('sample_rate', 22050)
+            channels = piper_config.get('channels', 1)
+            audio_format = piper_config.get('format', 'S16_LE')
+            
+            # Use aplay to play the audio data
+            cmd = ['aplay', '-r', str(sample_rate), '-f', audio_format, '-c', str(channels), '-']
+            
+            self.current_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=None, stderr=None)
+            self.current_process.stdin.write(audio_data)
+            self.current_process.stdin.close()
+            
+            # Wait for completion
+            return_code = self.current_process.wait()
+            
+            if return_code == 0:
+                logger.info(f"🔊 Spoke with persistent Piper: {text[:50]}...")
+            else:
+                logger.error(f"❌ Persistent Piper failed with return code: {return_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error with persistent Piper: {e}")
+            # Fallback to command-line method
+            self._speak_with_piper_command(text, None, noise_scale, length_scale)
+    
+    def _speak_with_piper_command(self, text: str, model_path: str, noise_scale: float, length_scale: float):
+        """Speak using command-line Piper (fallback method)"""
+        try:
+            # Get model path if not provided
+            if model_path is None:
+                piper_config = SOUND_SYSTEM.get('piper', {})
+                model_path = piper_config.get('models', {}).get(self.language, 
+                                                              piper_config.get('model_path', ''))
             
             # Escape text for shell safety
             safe_text = shlex.quote(text)
             
             # Get audio configuration
+            piper_config = SOUND_SYSTEM.get('piper', {})
             use_aplay = piper_config.get('use_aplay', True)
             sample_rate = piper_config.get('sample_rate', 22050)
             channels = piper_config.get('channels', 1)
@@ -304,22 +425,22 @@ class SoundSystem:
                 ]
             
             # Execute command (don't capture stdout/stderr for audio output)
-            logger.info(f"🔊 Speaking with Piper: {text[:50]}...")
-            self.current_process = subprocess.Popen(cmd)
-            self.current_process.wait()
+            logger.info(f"🔊 Speaking with command-line Piper: {text[:50]}...")
+            logger.debug(f"🔧 Piper command: {' '.join(cmd)}")
             
-            logger.info(f"🔊 Spoke with Piper: {text[:50]}...")
+            # Start the process without capturing output (for audio)
+            self.current_process = subprocess.Popen(cmd, stdout=None, stderr=None)
             
+            # Wait for completion
+            return_code = self.current_process.wait()
+            
+            if return_code == 0:
+                logger.info(f"🔊 Spoke with command-line Piper: {text[:50]}...")
+            else:
+                logger.error(f"❌ Piper command failed with return code: {return_code}")
+                
         except Exception as e:
-            logger.error(f"❌ Error with Piper: {e}")
-        finally:
-            self.is_speaking = False
-            
-            # Process next in queue
-            if self.sound_queue:
-                next_text = self.sound_queue.pop(0)
-                logger.debug(f"📝 Processing queued speech: {next_text[:50]}...")
-                self._speak_immediately(next_text)
+            logger.error(f"❌ Error with command-line Piper: {e}")
     
     def _speak_with_espeak(self, text: str):
         """Speak using espeak-ng"""

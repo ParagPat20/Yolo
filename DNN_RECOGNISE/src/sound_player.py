@@ -45,8 +45,13 @@ class SoundPlayer:
         else:
             return False
     
-    def play_alarm(self):
+    def play_alarm(self, sound_system=None):
         """Play alarm sound for unknown person detection"""
+        # Check if alarm is already playing
+        if self.alarm_active:
+            logger.info("🚨 Alarm already playing - skipping new alarm")
+            return
+        
         if not self.mp3_available:
             logger.info("🚨 ALARM: Unknown person detected!")
             return
@@ -62,8 +67,11 @@ class SoundPlayer:
         
         # Start extended alarm
         self.alarm_active = True
+        if sound_system:
+            sound_system.start_alarm()
+        
         self.alarm_thread = threading.Thread(target=self._play_extended_alarm, 
-                                            args=(alarm_path,), daemon=True)
+                                            args=(alarm_path, sound_system), daemon=True)
         self.alarm_thread.start()
         logger.info("🚨 Extended alarm started")
     
