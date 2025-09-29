@@ -233,6 +233,149 @@ class LEDController:
             logger.error(f"Error cleaning up LED controller: {e}")
 
 
+class ButtonEmulator:
+    """Emulate a momentary button by pulling a GPIO LOW for a duration."""
+
+    def __init__(self, pin: int):
+        self.pin = pin
+        self._setup_gpio()
+
+    def _setup_gpio(self):
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(self.pin, GPIO.OUT, initial=GPIO.HIGH)
+            logger.info(f"✅ Button emulator ready on pin {self.pin}")
+        except Exception as e:
+            logger.error(f"Failed to setup button emulator on pin {self.pin}: {e}")
+
+    def press(self, press_ms: int):
+        try:
+            GPIO.output(self.pin, GPIO.LOW)
+            time.sleep(press_ms / 1000.0)
+            GPIO.output(self.pin, GPIO.HIGH)
+            time.sleep(0.05)  # debounce gap
+        except Exception as e:
+            logger.error(f"Button press failed on pin {self.pin}: {e}")
+
+    def double_click(self, press_ms: int, gap_ms: int):
+        self.press(press_ms)
+        time.sleep(gap_ms / 1000.0)
+        self.press(press_ms)
+
+    def hold(self, hold_ms: int):
+        self.press(hold_ms)
+
+
+class SpeakerController:
+    """Control Bluetooth speaker power using its button line (hold LOW to power on)."""
+
+    def __init__(self, pin: int):
+        self.button = ButtonEmulator(pin)
+        self.last_power_on = 0.0
+
+    def power_on(self):
+        try:
+            now = time.time()
+            # Avoid repeated holds; only attempt if >5s since last
+            if now - self.last_power_on < 5.0:
+                return
+            logger.info("🔊 Powering on Bluetooth speaker (hold 2s)")
+            self.button.hold(HARDWARE['speaker_power_hold_ms'])
+            self.last_power_on = now
+        except Exception as e:
+            logger.error(f"Failed to power on speaker: {e}")
+
+
+class ExternalLightsController:
+    """Control external lights via their mode button (GPIO3).
+
+    Modes cycle on single-click: High -> Low -> Blinking -> Off
+    Double-click: SOS
+    From SOS: single-click exits (per device behavior)
+    """
+
+    def __init__(self, pin: int):
+        self.button = ButtonEmulator(pin)
+        self.mode = 'unknown'  # Track our expected mode
+        self._init_to_off()
+        self._motion_timer = None
+
+    def _single_click(self):
+        self.button.press(HARDWARE['button_press_ms'])
+
+    def _double_click(self):
+        self.button.double_click(HARDWARE['button_press_ms'], HARDWARE['double_click_gap_ms'])
+
+    def _init_to_off(self):
+        # Best-effort: cycle 4 clicks to reach Off regardless of start position
+        logger.info("💡 Initializing external lights to OFF")
+        for _ in range(4):
+            self._single_click()
+        self.mode = 'off'
+
+    def set_off(self):
+        if self.mode == 'sos':
+            # Exit SOS: single click per device
+            self._single_click()
+            self.mode = 'off'
+            return
+        # Compute clicks from current known mode
+        transitions = {
+            'high': 3,  # high->low->blink->off
+            'low': 2,   # low->blink->off
+            'blink': 1, # blink->off
+            'off': 0,
+            'unknown': 4
+        }
+        clicks = transitions.get(self.mode, 4)
+        for _ in range(clicks):
+            self._single_click()
+        self.mode = 'off'
+
+    def set_high(self):
+        # Ensure off first to have deterministic transition to high
+        if self.mode != 'off':
+            self.set_off()
+        # One single click to High
+        self._single_click()
+        self.mode = 'high'
+
+    def set_low(self):
+        # From off: two clicks to Low (off->high->low)
+        if self.mode != 'off':
+            self.set_off()
+        self._single_click()
+        self._single_click()
+        self.mode = 'low'
+
+    def set_blink(self):
+        # From off: three clicks to Blinking
+        if self.mode != 'off':
+            self.set_off()
+        for _ in range(3):
+            self._single_click()
+        self.mode = 'blink'
+
+    def set_sos(self):
+        logger.info("🚨 Setting external lights to SOS (double click)")
+        self._double_click()
+        self.mode = 'sos'
+
+    def motion_high_for(self, seconds: int):
+        # Cancel previous timer
+        if self._motion_timer and self._motion_timer.is_alive():
+            self._motion_timer.cancel()
+        self.set_high()
+        def _turn_off():
+            try:
+                self.set_off()
+                logger.info("💡 Motion window ended - lights OFF")
+            except Exception as e:
+                logger.error(f"Failed to turn off lights after motion: {e}")
+        self._motion_timer = threading.Timer(seconds, _turn_off)
+        self._motion_timer.daemon = True
+        self._motion_timer.start()
+
 
 
 class HardwareManager:
@@ -241,6 +384,8 @@ class HardwareManager:
     def __init__(self):
         self.pir_detector = None
         self.led_controller = None
+        self.speaker_controller = None
+        self.lights_controller = None
 
         self._init_hardware()
 
@@ -256,6 +401,14 @@ class HardwareManager:
             # Initialize LED controller
             self.led_controller = LEDController()
 
+            # Initialize external devices
+            self.speaker_controller = SpeakerController(HARDWARE['speaker_button_pin'])
+            self.lights_controller = ExternalLightsController(HARDWARE['lights_button_pin'])
+
+            # Startup behavior: power on speaker, ensure lights are OFF
+            self.speaker_controller.power_on()
+            self.lights_controller.set_off()
+
             logger.info("✅ Hardware manager initialized successfully")
 
         except Exception as e:
@@ -266,14 +419,29 @@ class HardwareManager:
         """Handle motion detection event"""
         if self.led_controller:
             self.led_controller.turn_on_brightness(CCTV['led_brightness_duration'])
-
-        if self.led_controller:
             self.led_controller.set_status('verifying')
+
+        # External lights to high brightness for configured duration
+        if self.lights_controller:
+            self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
 
     def set_system_status(self, status: str):
         """Set overall system status"""
         if self.led_controller:
             self.led_controller.set_status(status)
+
+    # Convenience methods for external devices
+    def lights_sos(self):
+        if self.lights_controller:
+            self.lights_controller.set_sos()
+
+    def lights_off(self):
+        if self.lights_controller:
+            self.lights_controller.set_off()
+
+    def lights_high_for_motion(self):
+        if self.lights_controller:
+            self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
 
     def cleanup(self):
         """Cleanup all hardware resources"""

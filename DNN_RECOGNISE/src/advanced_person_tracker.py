@@ -112,6 +112,12 @@ class PersonTrack:
     # Ghost track detection
     ghost_track: bool = False  # Mark tracks that are no longer valid (e.g., hand detection)
 
+    # Final warning control during verification
+    final_warning_played: bool = False  # Only one final warning 2s before timeout
+
+    # Audio cooldowns
+    last_verification_audio_time: float = 0.0  # Cooldown for initial verification request sound
+
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
     
@@ -997,6 +1003,13 @@ class AdvancedPersonTracker:
                     track.alarm_end_time = 0.0
                     logger.info(f"✅ Alarm timeout completed for track {track.track_id}")
 
+                    # After alarm timeout, turn lights off (exit SOS)
+                    if self.hardware_manager and hasattr(self.hardware_manager, 'lights_off'):
+                        try:
+                            self.hardware_manager.lights_off()
+                        except Exception as e:
+                            logger.warning(f"Failed to turn off lights after alarm timeout: {e}")
+
     def _cleanup_ghost_tracks(self, tracks: List[PersonTrack]):
         """Clean up ghost tracks that are no longer valid (e.g., from hand detection)"""
         current_time = time.time()
@@ -1191,6 +1204,13 @@ class AdvancedPersonTracker:
                 except Exception as e:
                     logger.warning(f"Hardware alarm stop not available: {e}")
 
+            # Exit SOS mode on lights with a single click (turn lights off)
+            if self.hardware_manager and hasattr(self.hardware_manager, 'lights_off'):
+                try:
+                    self.hardware_manager.lights_off()
+                except Exception as e:
+                    logger.warning(f"Failed to turn off lights after known person: {e}")
+
             # Set status to ready (green LED)
             if self.hardware_manager:
                 try:
@@ -1228,6 +1248,7 @@ class AdvancedPersonTracker:
                 track.verification_start_time = current_time
                 track.verification_attempts = 0
                 track.last_verification_attempt = 0.0
+                track.final_warning_played = False
 
                 logger.info(f"🔍 Starting 20-second verification window for track {track.track_id}")
                 print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face for verification")
@@ -1269,11 +1290,19 @@ class AdvancedPersonTracker:
                 # Debug logging
                 logger.debug(f"🔍 Track {track.track_id}: face_elapsed={face_elapsed:.1f}s, remaining={remaining:.1f}s, timeout={face_detected_timeout}s")
                 
-                # Show countdown every second
+                # Suppress repetitive audio reminders; only a final warning at T-2s
+                # Still print countdown to console, but no audio spam
                 if int(face_elapsed) != getattr(track, '_last_face_countdown_second', -1):
                     track._last_face_countdown_second = int(face_elapsed)
                     if remaining > 0:
                         print(f"⏰ {int(remaining)} seconds to adjust your face...")
+
+                # Final audio warning 2 seconds before timeout (once)
+                if not track.final_warning_played and remaining <= 2.0 and remaining > 0.0:
+                    logger.info(f"🔔 Final warning for track {track.track_id} - {remaining:.1f}s left")
+                    # Play only one final reminder sound
+                    self._play_verification_reminder(track, reminder_count=999)
+                    track.final_warning_played = True
                 
                 if face_elapsed >= face_detected_timeout:
                     # Face is visible but still unknown after 10s timeout -> escalate to full unknown
@@ -1397,38 +1426,12 @@ class AdvancedPersonTracker:
                 track.verification_requested = False
                 return
                 
-            # Enhanced verification logic with repeated requests and progressive escalation
+            # Enhanced verification logic with minimal audio reminders
             time_since_request = current_time - track.verification_start_time
-            time_since_last_reminder = current_time - getattr(track, 'last_verification_reminder', 0)
-
             # Use CCTV-specific timeout settings
             verification_timeout = track.verification_timeout
             unknown_timeout = track.unknown_timeout
-
-            # Progressive reminder system - REDUCED FREQUENCY
-            reminder_interval = 8.0  # Remind every 8 seconds (reduced from 3)
-            max_reminders = 3  # Maximum number of reminders before alarm (reduced from 5)
-
-            # Send repeated verification requests
-            if (time_since_last_reminder >= reminder_interval and 
-                getattr(track, 'verification_reminder_count', 0) < max_reminders):
-                
-                track.verification_reminder_count = getattr(track, 'verification_reminder_count', 0) + 1
-                track.last_verification_reminder = current_time
-                
-                # Progressive urgency in messages
-                if track.verification_reminder_count <= 4:
-                    message = "Please show your face for verification"
-                elif track.verification_reminder_count <= 8:
-                    message = "Face verification required - Look at camera"
-                else:
-                    message = "Final warning - Show your face now"
-
-                logger.info(f"🔍 Person {track.track_id} - Reminder {track.verification_reminder_count}/{max_reminders}: {message}")
-                print(f"🔍 Reminder {track.verification_reminder_count}: {message}")
-
-                # Play verification reminder
-                self._play_verification_reminder(track, track.verification_reminder_count)
+            # No periodic reminders here; handled in face-visible branch as final warning only
 
             # Check if we've passed the "unknown" threshold (10 seconds) - start recording and alarm
             if time_since_request > unknown_timeout and not track.alert_sent:
@@ -1474,11 +1477,18 @@ class AdvancedPersonTracker:
                 logger.info(f"🔇 Skipping verification request - alarm is playing for track {track.track_id}")
                 return
                 
+            # Enforce 10s cooldown per track for this sound
+            now = time.time()
+            if now - getattr(track, 'last_verification_audio_time', 0.0) < 10.0:
+                logger.debug(f"⏳ Skipping verification audio due to cooldown for track {track.track_id}")
+                return
+
             logger.info(f"🔍 Verification request for track {track.track_id}")
             
             # Play verification request audio file
             if self.sound_player:
                 self.sound_player.play_verification_request()
+                track.last_verification_audio_time = now
             
             if self.hardware_manager:
                 logger.info("🔍 Using hardware manager for verification request")
@@ -1559,6 +1569,13 @@ class AdvancedPersonTracker:
                     logger.warning(f"Hardware alarm not available: {e}")
             else:
                 logger.info("🔇 No sound system or hardware manager available for alarm")
+
+            # Trigger SOS mode on external lights if available
+            if self.hardware_manager and hasattr(self.hardware_manager, 'lights_sos'):
+                try:
+                    self.hardware_manager.lights_sos()
+                except Exception as e:
+                    logger.warning(f"Failed to set lights SOS: {e}")
 
             # Mark person as unknown for red box display
             track.alert_sent = True

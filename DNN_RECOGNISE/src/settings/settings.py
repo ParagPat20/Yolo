@@ -107,11 +107,26 @@ SECURITY = {
 
 # CCTV Hardware Configuration
 HARDWARE = {
-    'pir_pin': 17,  # GPIO pin for PIR motion sensor
+    # PIR motion sensor on GPIO 4 per hardware spec
+    'pir_pin': 4,
+
+    # Existing status LED pins (if used elsewhere)
     'led_brightness_pin': 18,  # GPIO pin for high brightness LED
-    'led_green_pin': 22,  # GPIO pin for green status LED
-    'led_yellow_pin': 23,  # GPIO pin for yellow status LED
-    'led_red_pin': 24,  # GPIO pin for red status LED
+    'led_green_pin': 22,       # GPIO pin for green status LED
+    'led_yellow_pin': 23,      # GPIO pin for yellow status LED
+    'led_red_pin': 24,         # GPIO pin for red status LED
+
+    # New external device button pins
+    'speaker_button_pin': 2,   # GPIO 2: Bluetooth speaker power button (hold LOW 2s to power on)
+    'lights_button_pin': 3,    # GPIO 3: Lights mode button (click/double-click cycles modes)
+
+    # Timing configuration (milliseconds)
+    'button_press_ms': 120,          # Single click press duration
+    'double_click_gap_ms': 120,      # Time between the two clicks for double click
+    'speaker_power_hold_ms': 2000,   # Hold LOW 2 seconds to power speaker ON
+
+    # Motion lighting behavior
+    'motion_light_duration_s': 30,   # High brightness hold on motion
 }
 
 # CCTV System Settings
