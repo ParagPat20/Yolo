@@ -98,8 +98,6 @@ class PersonTrack:
     # Alarm/recording control
     alarm_end_time: float = 0.0  # When alarm should end for this person
     recording_end_time: float = 0.0  # Per-track recording end timestamp
-    alarm_active: bool = False  # Whether alarm is currently active for this person
-    alarm_start_time: float = 0.0  # When alarm started for this person
 
     # Guest Mode fields
     is_guest: bool = False  # Whether this person is a guest
@@ -796,8 +794,8 @@ class AdvancedPersonTracker:
         if CCTV['guest_mode_enabled']:
             self._check_guest_mode_timeout(person_tracks)
 
-        # Check and stop expired alarms
-        self._check_and_stop_expired_alarms(person_tracks)
+        # Check for alarm timeouts and stop expired alarms
+        self._check_alarm_timeouts(person_tracks)
 
         # Draw annotations
         annotated_frame = self._draw_annotations(frame, person_tracks)
@@ -963,6 +961,31 @@ class AdvancedPersonTracker:
             logger.info(f"🚶 Host {guest_track.guest_associated_with} has left - reverting guest (track {guest_track.track_id})")
             self._revert_guest_mode(guest_track, current_time)
 
+    def _check_alarm_timeouts(self, tracks: List[PersonTrack]):
+        """Check for alarm timeouts and stop expired alarms"""
+        current_time = time.time()
+        
+        # Check if any track has an expired alarm
+        for track in tracks:
+            if hasattr(track, 'alarm_end_time') and track.alarm_end_time > 0:
+                if current_time >= track.alarm_end_time:
+                    # Alarm time has expired - stop the alarm
+                    if self.sound_player and self.sound_player.is_alarm_playing():
+                        logger.info(f"⏰ Alarm timeout reached for track {track.track_id} - stopping alarm")
+                        self.sound_player.stop_alarm()
+                        print("🔇 Alarm timeout - 2 minutes completed")
+                    
+                    if self.hardware_manager:
+                        try:
+                            self.hardware_manager.stop_alarm()
+                            logger.info("🔇 Hardware alarm stopped due to timeout")
+                        except Exception as e:
+                            logger.warning(f"Hardware alarm stop not available: {e}")
+                    
+                    # Reset alarm end time
+                    track.alarm_end_time = 0.0
+                    logger.info(f"✅ Alarm timeout completed for track {track.track_id}")
+
     def _update_recordings(self, frame: np.ndarray, tracks: List[PersonTrack]):
         """Update active recordings for unknown persons"""
         current_time = time.time()
@@ -1109,18 +1132,24 @@ class AdvancedPersonTracker:
             # Clear any previous alerts
             track.alert_sent = False   # Reset alert state for proper welcome
 
-            # STOP ALARM IMMEDIATELY when known person is verified
-            if track.alarm_active:
-                logger.info(f"🔇 IMMEDIATELY stopping alarm for track {track.track_id} - known person verified")
-                self._stop_person_alarm(track)
-                track.alarm_active = False
-                track.alarm_end_time = 0.0
-                track.alarm_start_time = 0.0
-
             # Stop recording if it was active
             if track.is_recording:
                 logger.info(f"📹 Stopping recording for known person {track.track_id}")
                 self._stop_recording(track.track_id)
+
+            # STOP ALARM when known person is detected
+            if self.sound_player and self.sound_player.is_alarm_playing():
+                logger.info("🔇 STOPPING ALARM - Known person detected!")
+                self.sound_player.stop_alarm()
+                print("🔇 Alarm stopped - Known person verified!")
+
+            # Stop hardware alarm if available
+            if self.hardware_manager:
+                try:
+                    self.hardware_manager.stop_alarm()
+                    logger.info("🔇 Hardware alarm stopped")
+                except Exception as e:
+                    logger.warning(f"Hardware alarm stop not available: {e}")
 
             # Set status to ready (green LED)
             if self.hardware_manager:
@@ -1146,10 +1175,8 @@ class AdvancedPersonTracker:
 
                 track.last_greeting_time = current_time
 
-            # ACTIVATE GUEST MODE after successful verification and greeting
-            if CCTV['guest_mode_enabled']:
-                logger.info(f"👥 Activating guest mode for 15 minutes after {identity} verification")
-                self._activate_guest_mode_for_verified_person(track, current_time)
+            # Activate guest mode for 15 minutes after known person verification
+            self._activate_guest_mode_for_known_person(track, current_time)
 
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 
@@ -1325,9 +1352,9 @@ class AdvancedPersonTracker:
             verification_timeout = track.verification_timeout
             unknown_timeout = track.unknown_timeout
 
-            # Progressive reminder system
-            reminder_interval = 3.0  # Remind every 3 seconds
-            max_reminders = 5  # Maximum number of reminders before alarm
+            # Progressive reminder system - REDUCED FREQUENCY
+            reminder_interval = 8.0  # Remind every 8 seconds (reduced from 3)
+            max_reminders = 3  # Maximum number of reminders before alarm (reduced from 5)
 
             # Send repeated verification requests
             if (time_since_last_reminder >= reminder_interval and 
@@ -1381,17 +1408,19 @@ class AdvancedPersonTracker:
             # No need for additional 15-second timeout logic
 
     def _play_verification_request(self, track: PersonTrack):
-        """Play initial verification request"""
+        """Play initial verification request - DISABLED during alarm"""
         try:
+            # Check if alarm is playing - if so, don't play verification sounds
+            if self.sound_player and self.sound_player.is_alarm_playing():
+                logger.info(f"🔇 Skipping verification request - alarm is playing for track {track.track_id}")
+                return
+                
             logger.info(f"🔍 Verification request for track {track.track_id}")
-
-            # Check if any alarms are active - don't play verification sounds during alarm
-            any_alarm_active = any(t.alarm_active for t in self.tracker.tracks.values())
-
-            # Play verification request audio file only if no alarms are active
-            if not any_alarm_active and self.sound_player:
+            
+            # Play verification request audio file
+            if self.sound_player:
                 self.sound_player.play_verification_request()
-
+            
             if self.hardware_manager:
                 logger.info("🔍 Using hardware manager for verification request")
                 self.hardware_manager.request_verification()
@@ -1401,15 +1430,17 @@ class AdvancedPersonTracker:
             logger.error(f"Error in verification request: {e}")
 
     def _play_verification_reminder(self, track: PersonTrack, reminder_count: int):
-        """Play verification reminder with progressive urgency"""
+        """Play verification reminder with progressive urgency - DISABLED during alarm"""
         try:
-            # Check if any alarms are active - don't play verification sounds during alarm
-            any_alarm_active = any(t.alarm_active for t in self.tracker.tracks.values())
-
-            # Play verification reminder audio file only if no alarms are active
-            if not any_alarm_active and self.sound_player:
+            # Check if alarm is playing - if so, don't play verification sounds
+            if self.sound_player and self.sound_player.is_alarm_playing():
+                logger.info(f"🔇 Skipping verification reminder - alarm is playing for track {track.track_id}")
+                return
+                
+            # Play verification reminder audio file
+            if self.sound_player:
                 self.sound_player.play_verification_reminder(reminder_count)
-
+            
             if self.hardware_manager:
                 self.hardware_manager.request_verification()
             else:
@@ -1419,17 +1450,11 @@ class AdvancedPersonTracker:
 
 
     def _trigger_unknown_person_alarm(self, track: PersonTrack, current_time: float):
-        """Trigger immediate alarm for unknown person"""
+        """Trigger immediate alarm for unknown person with 2-minute duration"""
         try:
             logger.warning(f"🚨 IMMEDIATE ALARM TRIGGERED for unknown person {track.track_id}")
             print(f"🚨 SECURITY ALERT! Unknown person at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
-
-            # Set 2-minute alarm duration
-            alarm_duration = 120.0  # 2 minutes exactly
-            track.alarm_start_time = current_time
-            track.alarm_end_time = current_time + alarm_duration
-            track.alarm_active = True
 
             # Start recording for configured initial duration
             if CCTV['recording_enabled']:
@@ -1439,13 +1464,25 @@ class AdvancedPersonTracker:
                 if not track.is_recording:
                     self._start_recording(track)
 
-            # Play alarm sound (it will run for 2 minutes)
-            if self.sound_player:
+            # Set alarm end time for this track (2 minutes from now)
+            track.alarm_end_time = current_time + 120.0  # 2 minutes = 120 seconds
+            logger.info(f"⏰ Alarm will run for 2 minutes until {datetime.fromtimestamp(track.alarm_end_time).strftime('%H:%M:%S')}")
+
+            # Check if alarm is already playing
+            alarm_already_playing = False
+            if self.sound_player and self.sound_player.is_alarm_playing():
+                alarm_already_playing = True
+                logger.info("🚨 Alarm already playing - skipping new alarm")
+            
+            # Play alarm sound only if not already playing
+            if not alarm_already_playing and self.sound_player:
                 try:
                     self.sound_player.play_alarm()
-                    logger.info(f"🚨 2-minute alarm started for unknown person {track.track_id}")
+                    logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Alarm sound not available: {e}")
+            else:
+                logger.info("🚨 Alarm already active - not starting new alarm")
             
             if self.hardware_manager:
                 logger.info(f"🔴 Setting hardware status to 'alert' for unknown person {track.track_id}")
@@ -1468,69 +1505,7 @@ class AdvancedPersonTracker:
             
         except Exception as e:
             logger.error(f"❌ Error triggering unknown person alarm: {e}")
-
-    def _check_and_stop_expired_alarms(self, tracks: List[PersonTrack]):
-        """Check and stop alarms that have reached their 2-minute duration"""
-        current_time = time.time()
-
-        for track in tracks:
-            if track.alarm_active and track.alarm_end_time > 0 and current_time >= track.alarm_end_time:
-                logger.info(f"🔇 Alarm expired for track {track.track_id} after 2 minutes")
-                self._stop_person_alarm(track)
-                track.alarm_active = False
-                track.alarm_end_time = 0.0
-                track.alarm_start_time = 0.0
-
-    def _stop_person_alarm(self, track: PersonTrack):
-        """Stop alarm for a specific person/track"""
-        try:
-            # Stop sound system alarm
-            if self.sound_player and self.sound_player.is_alarm_playing():
-                logger.info(f"🔇 Stopping alarm for track {track.track_id}")
-                self.sound_player.stop_alarm()
-
-            # Stop hardware alarm
-            if self.hardware_manager:
-                try:
-                    self.hardware_manager.stop_alarm()
-                    logger.info(f"🔇 Hardware alarm stopped for track {track.track_id}")
-                except Exception as e:
-                    logger.warning(f"Hardware alarm stop failed: {e}")
-
-            # Reset hardware status if no other alarms are active
-            if not any(t.alarm_active for t in self.tracker.tracks.values()):
-                if self.hardware_manager:
-                    try:
-                        self.hardware_manager.set_system_status('ready')
-                        logger.info("🟢 Hardware status reset to ready (no active alarms)")
-                    except Exception as e:
-                        logger.warning(f"Hardware status reset failed: {e}")
-
-        except Exception as e:
-            logger.error(f"❌ Error stopping alarm for track {track.track_id}: {e}")
-
-    def _activate_guest_mode_for_verified_person(self, verified_track: PersonTrack, current_time: float):
-        """Activate guest mode after a verified person is identified"""
-        try:
-            # Find all currently unknown persons to potentially make them guests
-            current_tracks = list(self.tracker.tracks.values())
-
-            for track in current_tracks:
-                if (track.track_id != verified_track.track_id and  # Not the verified person
-                    not track.is_known and not track.is_guest and  # Unknown, not already guest
-                    not track.verification_requested and  # Not in verification process
-                    not track.alert_sent):  # Not already alerted as unknown
-
-                    # Check if this unknown person should be a guest of the verified person
-                    if self._should_be_guest(track, verified_track, current_time):
-                        self._activate_guest_mode(track, verified_track.identity, current_time)
-                        logger.info(f"👥 Guest mode activated: {verified_track.identity} + guest (track {track.track_id})")
-                    else:
-                        logger.debug(f"❌ Track {track.track_id} not suitable for guest mode with {verified_track.identity}")
-
-        except Exception as e:
-            logger.error(f"❌ Error activating guest mode for verified person: {e}")
-
+    
     def _handle_unknown_person_verified(self, track: PersonTrack, face_roi: np.ndarray, current_time: float, frame: Optional[np.ndarray] = None):
         """Handle when unknown person shows face and is verified as unknown"""
         if not track.alert_sent:
@@ -1693,36 +1668,24 @@ class AdvancedPersonTracker:
             logger.info("🔇 Stopping alarm - known person detected")
             self.sound_player.stop_alarm()
 
-        # Stop alarm for this specific track if it was active
-        if track.alarm_active:
-            logger.info(f"🔇 Stopping alarm for track {track.track_id} - known person verified")
-            track.alarm_active = False
-            track.alarm_end_time = 0.0
-            track.alarm_start_time = 0.0
-
-        # Check if any alarms are still active - only play greetings if no alarms are running
-        any_alarm_active = any(t.alarm_active for t in self.tracker.tracks.values())
-
-        if not any_alarm_active:
-            # Play greeting audio files only if no alarms are active
-            if self.sound_player:
-                try:
-                    # Play both time-based greeting and welcome message
-                    self.sound_player.play_time_based_greeting()
-                    self.sound_player.play_known_person_greeting(person_name)
-                except Exception as e:
-                    logger.warning(f"Greeting audio not available: {e}")
-            elif self.hardware_manager:
-                try:
-                    self.hardware_manager.greet_person(person_name)
-                except Exception as e:
-                    logger.warning(f"Hardware greeting not available: {e}")
-            else:
-                # Fallback to text output
-                print(f"{greeting}, {person_name}!")
+        # Play greeting audio files - DISABLED during alarm
+        if self.sound_player and not self.sound_player.is_alarm_playing():
+            try:
+                # Play both time-based greeting and welcome message
+                self.sound_player.play_time_based_greeting()
+                self.sound_player.play_known_person_greeting(person_name)
+            except Exception as e:
+                logger.warning(f"Greeting audio not available: {e}")
+        elif self.sound_player and self.sound_player.is_alarm_playing():
+            logger.info("🔇 Skipping greeting sounds - alarm is playing")
+        elif self.hardware_manager:
+            try:
+                self.hardware_manager.greet_person(person_name)
+            except Exception as e:
+                logger.warning(f"Hardware greeting not available: {e}")
         else:
-            logger.info("🔇 Suppressing greeting sounds - alarm still active for other tracks")
-            print(f"{greeting}, {person_name}! (audio suppressed - alarm active)")
+            # Fallback to text output
+            print(f"{greeting}, {person_name}!")
 
     def _welcome_back_person(self, track: PersonTrack, current_time: float):
         """Welcome back a recognized person"""
@@ -1736,33 +1699,19 @@ class AdvancedPersonTracker:
 
         logger.info(f"🎉 Welcoming back {person_name}")
 
-        # Stop alarm for this specific track if it was active
-        if track.alarm_active:
-            logger.info(f"🔇 Stopping alarm for track {track.track_id} - known person verified")
-            track.alarm_active = False
-            track.alarm_end_time = 0.0
-            track.alarm_start_time = 0.0
-
-        # Check if any alarms are still active - only play welcome if no alarms are running
-        any_alarm_active = any(t.alarm_active for t in self.tracker.tracks.values())
-
-        if not any_alarm_active:
-            # Play welcome back audio file only if no alarms are active
-            if self.sound_player:
-                try:
-                    self.sound_player.play_welcome_back(person_name)
-                except Exception as e:
-                    logger.warning(f"Welcome back audio not available: {e}")
-            elif self.hardware_manager:
-                try:
-                    self.hardware_manager.welcome_back(person_name)
-                except Exception as e:
-                    logger.warning(f"Hardware welcome not available: {e}")
-            else:
-                print(f"Welcome back, {person_name}!")
+        # Play welcome back audio file
+        if self.sound_player:
+            try:
+                self.sound_player.play_welcome_back(person_name)
+            except Exception as e:
+                logger.warning(f"Welcome back audio not available: {e}")
+        elif self.hardware_manager:
+            try:
+                self.hardware_manager.welcome_back(person_name)
+            except Exception as e:
+                logger.warning(f"Hardware welcome not available: {e}")
         else:
-            logger.info("🔇 Suppressing welcome sounds - alarm still active for other tracks")
-            print(f"Welcome back, {person_name}! (audio suppressed - alarm active)")
+            print(f"Welcome back, {person_name}!")
     
     def _needs_reverification(self, track: PersonTrack, current_time: float) -> bool:
         """Check if trusted person needs re-verification"""
@@ -1773,6 +1722,33 @@ class AdvancedPersonTracker:
         time_since_verification = current_time - track.last_face_verification
         return time_since_verification > SECURITY.get('trusted_person_memory', 300.0)
     
+    def _activate_guest_mode_for_known_person(self, track: PersonTrack, current_time: float):
+        """Activate 15-minute guest mode after known person verification"""
+        try:
+            # Set guest mode for this person
+            track.is_guest = True
+            track.guest_mode_start_time = current_time
+            track.guest_associated_with = track.identity
+            
+            logger.info(f"👥 Guest mode activated for {track.identity} - 15 minutes of guest access")
+            print(f"👥 Guest mode activated for {track.identity} - 15 minutes of guest access")
+            
+            # Announce guest mode activation
+            if self.sound_player:
+                try:
+                    self.sound_player.play_guest_mode_activated(track.identity)
+                except Exception as e:
+                    logger.warning(f"Guest mode sound not available: {e}")
+            
+            if self.hardware_manager:
+                try:
+                    self.hardware_manager.activate_guest_mode(track.identity)
+                except Exception as e:
+                    logger.warning(f"Hardware guest mode not available: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error activating guest mode: {e}")
+
     def _cleanup_trusted_memory(self):
         """Clean up old entries from trusted memory"""
         current_time = time.time()

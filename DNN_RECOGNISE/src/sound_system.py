@@ -219,8 +219,8 @@ class SoundSystem:
                 'person_detected': "Hello!",
                 'face_verification_request': "Please look at the camera for face verification.",
                 'face_verification_reminder': [
-                    "Show your face for verification.",
-                    "Face verification required - Look at camera.",
+                    "2.",
+                    "4.",
                     "Final warning - Show your face now."
                 ],
                 'verification_timeout': "Time's up! Face verification failed.",

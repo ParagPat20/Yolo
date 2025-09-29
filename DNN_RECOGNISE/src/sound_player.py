@@ -154,7 +154,7 @@ class SoundPlayer:
             logger.info("🔇 Alarm stopped")
     
     def play_alarm(self, sound_system=None):
-        """Play extended alarm sound"""
+        """Play extended alarm sound for 2 minutes"""
         if self.alarm_active:
             logger.info("🚨 Alarm already playing - skipping")
             return
@@ -165,7 +165,7 @@ class SoundPlayer:
         try:
             self.alarm_active = True
             
-            # Start alarm in background thread
+            # Start alarm in background thread with 2-minute duration
             self.alarm_thread = threading.Thread(target=self._play_extended_alarm, daemon=True)
             self.alarm_thread.start()
             
@@ -173,17 +173,19 @@ class SoundPlayer:
             if sound_system:
                 sound_system.start_alarm()
             
-            logger.info("🚨 Extended alarm started")
+            logger.info("🚨 Extended alarm started - will run for 2 minutes")
             
         except Exception as e:
             logger.error(f"❌ Error starting alarm: {e}")
             self.alarm_active = False
     
     def _play_extended_alarm(self, sound_system=None):
-        """Play extended alarm sound for configured duration"""
+        """Play extended alarm sound for exactly 2 minutes"""
         try:
             start_time = time.time()
-            end_time = start_time + (self.alarm_duration_minutes * 60)
+            end_time = start_time + 120.0  # Exactly 2 minutes = 120 seconds
+            
+            logger.info(f"🚨 Alarm will run for 2 minutes until {time.strftime('%H:%M:%S', time.localtime(end_time))}")
             
             while self.alarm_active and time.time() < end_time:
                 # Play alarm sound
@@ -197,7 +199,7 @@ class SoundPlayer:
             if sound_system:
                 sound_system.stop_alarm()
             
-            logger.info("🔇 Extended alarm completed")
+            logger.info("🔇 Extended alarm completed - 2 minutes elapsed")
             
         except Exception as e:
             logger.error(f"❌ Error in extended alarm: {e}")

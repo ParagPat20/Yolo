@@ -9,11 +9,8 @@ import os
 import logging
 import subprocess
 import shlex
-import threading
-import time
 from datetime import datetime
 from typing import Dict, List, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -37,18 +34,13 @@ class WAVFileUpdater:
         self.language = SOUND_SYSTEM.get('language', 'en')
         self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
         self.piper_config = SOUND_SYSTEM.get('piper', {})
-
-        # Threading configuration
-        self.max_workers = 4  # Maximum concurrent WAV file generations
-        self.generation_timeout = 60  # Timeout per file generation (seconds)
-
+        
         # Create WAV files directory
         os.makedirs(self.wav_files_dir, exist_ok=True)
-
+        
         logger.info(f"🔊 WAV File Updater initialized")
         logger.info(f"📁 WAV files directory: {self.wav_files_dir}")
         logger.info(f"🌐 Language: {self.language}")
-        logger.info(f"⚡ Max concurrent workers: {self.max_workers}")
     
     def check_piper_availability(self) -> bool:
         """Check if Piper TTS is available"""
@@ -123,24 +115,24 @@ class WAVFileUpdater:
         """Generate a single WAV file using Piper TTS"""
         try:
             # Get Piper configuration
-            model_path = self.piper_config.get('models', {}).get(self.language,
+            model_path = self.piper_config.get('models', {}).get(self.language, 
                                                                self.piper_config.get('model_path', ''))
             noise_scale = self.piper_config.get('noise', 0.667)
             length_scale = self.piper_config.get('length_penalty', 1.0)
-
+            
             # Escape text for shell safety
             safe_text = shlex.quote(text)
-
+            
             # Build Piper command to generate WAV file
             cmd = [
                 'bash', '-c',
                 f'echo {safe_text} | piper --model {model_path} --length-scale {length_scale} --noise-scale {noise_scale} --output-file {filepath}'
             ]
-
+            
             # Execute command
             logger.info(f"🎵 Generating WAV file: {os.path.basename(filepath)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.generation_timeout)
-
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
             if result.returncode == 0 and os.path.exists(filepath):
                 logger.info(f"✅ Generated WAV file: {os.path.basename(filepath)}")
                 return True
@@ -148,116 +140,71 @@ class WAVFileUpdater:
                 logger.error(f"❌ Failed to generate WAV file: {os.path.basename(filepath)}")
                 logger.error(f"Error: {result.stderr}")
                 return False
-
+                
         except subprocess.TimeoutExpired:
             logger.error(f"❌ Timeout generating WAV file: {os.path.basename(filepath)}")
             return False
         except Exception as e:
             logger.error(f"❌ Error generating WAV file {os.path.basename(filepath)}: {e}")
             return False
-
-    def _generate_single_file_task(self, message_key: str, variant: str, text: str, filepath: str) -> Tuple[str, bool]:
-        """Generate a single WAV file (used by threading)"""
-        filename = os.path.basename(filepath)
-        try:
-            logger.info(f"🎵 [Thread] Starting generation: {filename}")
-            success = self.generate_wav_file(text, filepath)
-            if success:
-                logger.info(f"✅ [Thread] Completed: {filename}")
-            else:
-                logger.error(f"❌ [Thread] Failed: {filename}")
-            return filename, success
-        except Exception as e:
-            logger.error(f"❌ [Thread] Exception for {filename}: {e}")
-            return filename, False
     
     def update_all_wav_files(self, force_update: bool = False) -> Tuple[int, int]:
-        """Update all WAV files from settings using threading for concurrent generation"""
-        logger.info("🎵 Updating WAV files from settings with threading...")
-        start_time = time.time()
-
+        """Update all WAV files from settings"""
+        logger.info("🎵 Updating WAV files from settings...")
+        
         if not self.check_piper_availability():
             logger.error("❌ Piper TTS not available - cannot generate WAV files")
             return 0, 0
-
+        
         messages = self.get_all_messages()
-        file_tasks = []
-
-        # Collect all file generation tasks
+        generated_count = 0
+        skipped_count = 0
+        
         for message_key, message_data in messages.items():
             if isinstance(message_data, dict):
                 # Handle messages with multiple variants (like greetings)
                 for variant_key, text in message_data.items():
                     filename = f"{message_key}_{variant_key}.wav"
                     filepath = os.path.join(self.wav_files_dir, filename)
-
+                    
                     if not os.path.exists(filepath) or force_update:
-                        file_tasks.append((message_key, variant_key, text, filepath))
+                        if self.generate_wav_file(text, filepath):
+                            generated_count += 1
+                        else:
+                            logger.warning(f"⚠️ Failed to generate: {filename}")
                     else:
                         logger.info(f"⏭️ Skipping existing file: {filename}")
-
+                        skipped_count += 1
+                        
             elif isinstance(message_data, list):
                 # Handle messages with multiple variants (like verification reminders)
                 for i, text in enumerate(message_data):
                     filename = f"{message_key}_{i+1}.wav"
                     filepath = os.path.join(self.wav_files_dir, filename)
-
+                    
                     if not os.path.exists(filepath) or force_update:
-                        file_tasks.append((message_key, str(i+1), text, filepath))
+                        if self.generate_wav_file(text, filepath):
+                            generated_count += 1
+                        else:
+                            logger.warning(f"⚠️ Failed to generate: {filename}")
                     else:
                         logger.info(f"⏭️ Skipping existing file: {filename}")
+                        skipped_count += 1
             else:
                 # Handle simple text messages
                 filename = f"{message_key}.wav"
                 filepath = os.path.join(self.wav_files_dir, filename)
-
+                
                 if not os.path.exists(filepath) or force_update:
-                    file_tasks.append((message_key, "", message_data, filepath))
-                else:
-                    logger.info(f"⏭️ Skipping existing file: {filename}")
-
-        total_tasks = len(file_tasks)
-        if total_tasks == 0:
-            logger.info("✅ All WAV files are up to date")
-            return 0, len(messages)
-
-        logger.info(f"⚡ Processing {total_tasks} files with {self.max_workers} concurrent workers")
-
-        # Generate files using threading
-        generated_count = 0
-        failed_files = []
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all tasks
-            future_to_task = {
-                executor.submit(self._generate_single_file_task, task[0], task[1], task[2], task[3]): task
-                for task in file_tasks
-            }
-
-            # Process completed tasks
-            for future in as_completed(future_to_task, timeout=self.generation_timeout * total_tasks):
-                try:
-                    filename, success = future.result(timeout=10)
-                    if success:
+                    if self.generate_wav_file(message_data, filepath):
                         generated_count += 1
                     else:
-                        failed_files.append(filename)
-                except Exception as e:
-                    task = future_to_task[future]
-                    filename = os.path.basename(task[3])
-                    logger.error(f"❌ Task failed for {filename}: {e}")
-                    failed_files.append(filename)
-
-        end_time = time.time()
-        duration = end_time - start_time
-
-        # Report results
-        logger.info(f"✅ Generated: {generated_count}, Failed: {len(failed_files)}, Duration: {duration:.2f}s")
-
-        if failed_files:
-            logger.warning(f"⚠️ Failed to generate: {', '.join(failed_files[:5])}{'...' if len(failed_files) > 5 else ''}")
-
-        return generated_count, total_tasks - generated_count
+                        logger.warning(f"⚠️ Failed to generate: {filename}")
+                else:
+                    logger.info(f"⏭️ Skipping existing file: {filename}")
+                    skipped_count += 1
+        
+        return generated_count, skipped_count
     
     def update_specific_wav_file(self, message_key: str, variant: str = None) -> bool:
         """Update a specific WAV file"""
@@ -352,14 +299,6 @@ class WAVFileUpdater:
         
         return info
 
-    def get_threading_info(self) -> Dict:
-        """Get threading configuration information"""
-        return {
-            'max_workers': self.max_workers,
-            'generation_timeout': self.generation_timeout,
-            'threading_enabled': True
-        }
-
 
 def main():
     """Main function with command line interface"""
@@ -382,29 +321,16 @@ def main():
                        help='Clean all WAV files')
     parser.add_argument('--language', type=str, choices=['en', 'gu'],
                        help='Set language (en/gu)')
-    parser.add_argument('--workers', type=int, metavar='N',
-                       help='Number of concurrent workers (default: 4)')
-    parser.add_argument('--timeout', type=int, metavar='SECONDS',
-                       help='Timeout per file generation in seconds (default: 60)')
     
     args = parser.parse_args()
     
     # Initialize updater
     updater = WAVFileUpdater()
-
+    
     # Set language if specified
     if args.language:
         updater.language = args.language
         logger.info(f"🌐 Language set to: {args.language}")
-
-    # Set threading configuration if specified
-    if args.workers:
-        updater.max_workers = args.workers
-        logger.info(f"⚡ Max workers set to: {args.workers}")
-
-    if args.timeout:
-        updater.generation_timeout = args.timeout
-        logger.info(f"⏱️ Generation timeout set to: {args.timeout} seconds")
     
     # Handle different operations
     if args.update_all:
@@ -432,16 +358,11 @@ def main():
     elif args.info:
         logger.info("📊 WAV files information...")
         info = updater.get_wav_file_info()
-        threading_info = updater.get_threading_info()
-
         logger.info(f"Total files: {info['total_files']}")
         logger.info(f"Directory: {info['wav_files_dir']}")
         logger.info(f"Language: {info['language']}")
         logger.info(f"Piper available: {info['piper_available']}")
-        logger.info(f"Threading: {threading_info['threading_enabled']}")
-        logger.info(f"Max workers: {threading_info['max_workers']}")
-        logger.info(f"Generation timeout: {threading_info['generation_timeout']}s")
-
+        
         if info['files']:
             logger.info("Files:")
             for file_info in info['files']:
