@@ -75,6 +75,12 @@ if command -v tmux >/dev/null 2>&1; then
   tmux has-session -t cctv >/dev/null 2>&1 || tmux new-session -d -s cctv
   tmux send-keys -t cctv "cd '$PROJECT_DIR' && DISPLAY='$ACTIVE_DISPLAY' ${XAUTHORITY:+XAUTHORITY='$XAUTHORITY_PATH'} python3 -u '$SCRIPT'" C-m
   echo "[start_cctv] Launched in tmux. Attach with: tmux attach -t cctv"
+  # Keep this process alive while the tmux session exists so systemd doesn't
+  # tear down the cgroup and kill tmux. When session ends, exit.
+  while tmux has-session -t cctv >/dev/null 2>&1; do
+    sleep 2
+  done
+  echo "[start_cctv] tmux session 'cctv' ended. Exiting."
   exit 0
 else
   echo "[start_cctv] tmux not found; running in foreground."
