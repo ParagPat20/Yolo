@@ -1246,11 +1246,11 @@ class AdvancedPersonTracker:
             self._activate_guest_mode_for_known_person(track, current_time)
 
             # Also open a global guest window so any new unknown appears as guest
-            self.global_guest_mode_until = current_time + CCTV.get('guest_mode_duration', 900.0)
+            self.global_guest_mode_until = current_time + CCTV.get('guest_mode_duration', 60.0)
             self.global_guest_host_name = identity
 
             # Set global silence window (10 minutes)
-            self.silence_until = current_time + 600.0
+            self.silence_until = current_time + 60.0
 
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 

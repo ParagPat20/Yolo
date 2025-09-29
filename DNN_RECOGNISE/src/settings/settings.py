@@ -169,8 +169,8 @@ CCTV = {
     'unknown_initial_record_seconds': 600.0,  # Initial recording length for unknown detection (10 minutes)
     # Guest Mode Settings
     'guest_mode_enabled': True,  # Enable context-aware guest mode
-    'guest_mode_duration': 900.0,  # Guest mode duration in seconds (15 minutes)
-    'guest_detection_distance': 200.0,  # Maximum distance for guest association (pixels)
+    'guest_mode_duration': 60.0,  # Guest mode duration in seconds (15 minutes)
+    'guest_detection_distance': 100.0,  # Maximum distance for guest association (pixels)
     'guest_trajectory_similarity': 0.7,  # Minimum trajectory similarity for guest detection
     'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
 }
