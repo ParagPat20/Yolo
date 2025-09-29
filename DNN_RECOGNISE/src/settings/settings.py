@@ -108,7 +108,7 @@ SECURITY = {
 # CCTV Hardware Configuration
 HARDWARE = {
     # PIR motion sensor on GPIO 4 per hardware spec
-    'pir_pin': 4,
+    'pir_pin': 15,
 
     # Existing status LED pins (if used elsewhere)
     'led_brightness_pin': 18,  # GPIO pin for high brightness LED
