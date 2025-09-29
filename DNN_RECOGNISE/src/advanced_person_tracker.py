@@ -33,14 +33,14 @@ from settings.settings import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Raspberry Pi camera imports
+# Raspberry Pi camera imports (robust to runtime import failures)
 try:
     from picamera2 import Picamera2, Preview
     PICAMERA2_AVAILABLE = True
     logger.info("📷 Picamera2 available for Raspberry Pi")
-except ImportError:
+except Exception as e:
     PICAMERA2_AVAILABLE = False
-    logger.warning("📷 Picamera2 not available, falling back to OpenCV")
+    logger.warning(f"📷 Picamera2 not available or failed to import ({e}); falling back to OpenCV")
 
 # Try to import hardware interface
 try:

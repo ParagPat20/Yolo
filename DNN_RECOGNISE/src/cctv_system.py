@@ -132,7 +132,7 @@ class CCTVSystem:
                 logger.info(f"✅ Picamera2 initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps with autofocus")
                 return True
 
-            except ImportError:
+            except Exception:
                 logger.warning("📷 Picamera2 not available, falling back to OpenCV")
 
             # Fallback to OpenCV

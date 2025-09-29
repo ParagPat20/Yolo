@@ -23,9 +23,9 @@ try:
     from picamera2 import Picamera2, Preview
     PICAMERA2_AVAILABLE = True
     logger.info("📷 Picamera2 available for Raspberry Pi")
-except ImportError:
+except Exception as e:
     PICAMERA2_AVAILABLE = False
-    logger.warning("📷 Picamera2 not available, falling back to OpenCV")
+    logger.warning(f"📷 Picamera2 not available or failed to import ({e}), falling back to OpenCV")
 
 class EnhancedFaceDetector:
     """
