@@ -1211,14 +1211,14 @@ class AdvancedPersonTracker:
                 except Exception as e:
                     logger.warning(f"Hardware alarm stop not available: {e}")
 
-            # Exit SOS mode on lights with a single click (turn lights off)
+            # Ensure any alert state LEDs revert to ready
             if self.hardware_manager and hasattr(self.hardware_manager, 'lights_off'):
                 try:
                     self.hardware_manager.lights_off()
                 except Exception as e:
                     logger.warning(f"Failed to turn off lights after known person: {e}")
 
-            # Set status to ready (green LED)
+            # Set status to ready (green LED steady)
             if self.hardware_manager:
                 try:
                     self.hardware_manager.set_system_status('ready')
@@ -2144,9 +2144,15 @@ def initialize_camera(camera_index: int = 0):
                 display="lores"
             )
             picam2.configure(preview_config)
-            # Picamera Module 2: no AF controls; set frame rate only
+            # Set controls: FPS and Continuous AF if available
             try:
                 picam2.set_controls({"FrameRate": CAMERA['fps']})
+            except Exception:
+                pass
+            try:
+                from libcamera import controls
+                if hasattr(controls, 'AfModeEnum'):
+                    picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
             except Exception:
                 pass
             

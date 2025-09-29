@@ -112,9 +112,18 @@ class CCTVSystem:
                     display="lores"
                 )
                 self.camera.configure(preview_config)
-                # Picamera Module 2 has no AF controls; set only frame rate
+                # Configure controls: FPS and Continuous AF if available
+                try:
+                    from libcamera import controls
+                except Exception:
+                    controls = None
                 try:
                     self.camera.set_controls({"FrameRate": CAMERA['fps']})
+                except Exception:
+                    pass
+                try:
+                    if controls is not None and hasattr(controls, 'AfModeEnum'):
+                        self.camera.set_controls({"AfMode": controls.AfModeEnum.Continuous})
                 except Exception:
                     pass
                 self._continuous_af_enabled = False
@@ -187,7 +196,7 @@ class CCTVSystem:
         self.running = True
         logger.info("🎯 CCTV System started - monitoring for persons and faces")
 
-        # Set initial status
+        # Set initial status (system working -> green ON)
         if self.hardware_manager:
             self.hardware_manager.set_system_status('ready')
 
@@ -236,19 +245,17 @@ class CCTVSystem:
                 elif key == ord('m'):
                     self.toggle_motion_detection()
                 elif key == ord('l'):
-                    # Single-click the real device button (cycle modes)
+                    # Toggle MOSFET LED ON for motion duration
                     if self.hardware_manager:
                         try:
-                            self.hardware_manager.lights_single_click()
+                            # If currently on, turn off; else turn on for motion duration
+                            led_on = getattr(self.hardware_manager.led_controller, 'brightness_on', False)
+                            if led_on:
+                                self.hardware_manager.lights_off()
+                            else:
+                                self.hardware_manager.lights_high_for_motion()
                         except Exception as e:
-                            logger.error(f"Failed to single-click lights: {e}")
-                elif key == ord('k'):
-                    # Double-click -> SOS mode; single-click again to OFF
-                    if self.hardware_manager:
-                        try:
-                            self.hardware_manager.lights_double_click()
-                        except Exception as e:
-                            logger.error(f"Failed to double-click lights: {e}")
+                            logger.error(f"Failed to toggle MOSFET LED: {e}")
 
             logger.info("👋 CCTV System stopped")
 

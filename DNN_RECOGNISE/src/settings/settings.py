@@ -128,14 +128,14 @@ HARDWARE = {
     'pir_pin': 15,
 
     # Existing status LED pins (if used elsewhere)
-    'led_brightness_pin': 3,  # GPIO pin for high brightness LED
-    'led_green_pin': 18,       # GPIO pin for green status LED
-    'led_yellow_pin': 23,      # GPIO pin for yellow status LED
-    'led_red_pin': 24,         # GPIO pin for red status LED
+    'led_brightness_pin': 18,  # GPIO pin for high brightness LED
+    'led_green_pin': 17,       # GPIO pin for green status LED
+    'led_yellow_pin': 27,      # GPIO pin for yellow status LED
+    'led_red_pin': 22,         # GPIO pin for red status LED
 
     # New external device button pins
     'speaker_button_pin': 2,   # GPIO 2: Bluetooth speaker power button (hold LOW 2s to power on)
-    'lights_button_pin': 3,    # GPIO 3: Lights mode button (click/double-click cycles modes)
+    'lights_button_pin': 18,    # GPIO 3: Lights mode button (click/double-click cycles modes)
 
     # Timing configuration (milliseconds)
     'button_press_ms': 120,          # Single click press duration

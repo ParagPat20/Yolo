@@ -69,7 +69,16 @@ export DISPLAY="$ACTIVE_DISPLAY"
 [[ -n "$XAUTHORITY_PATH" ]] && export XAUTHORITY="$XAUTHORITY_PATH"
 
 cd "$PROJECT_DIR"
-echo "[start_cctv] Starting CCTV with preview..."
-exec python3 -u "$SCRIPT"
+echo "[start_cctv] Starting CCTV in tmux session 'cctv'..."
+if command -v tmux >/dev/null 2>&1; then
+  # Create or reuse session
+  tmux has-session -t cctv >/dev/null 2>&1 || tmux new-session -d -s cctv
+  tmux send-keys -t cctv "cd '$PROJECT_DIR' && DISPLAY='$ACTIVE_DISPLAY' ${XAUTHORITY:+XAUTHORITY='$XAUTHORITY_PATH'} python3 -u '$SCRIPT'" C-m
+  echo "[start_cctv] Launched in tmux. Attach with: tmux attach -t cctv"
+  exit 0
+else
+  echo "[start_cctv] tmux not found; running in foreground."
+  exec python3 -u "$SCRIPT"
+fi
 
 

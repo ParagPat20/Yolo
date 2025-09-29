@@ -65,6 +65,7 @@ class LEDController:
         self.red_pin = HARDWARE['led_red_pin']
 
         self.brightness_timer = None
+        self.brightness_on = False
         self.brightness_enabled = CCTV['led_auto_brightness']
 
         # Guest mode variables
@@ -105,10 +106,16 @@ class LEDController:
         self._set_red(False)
 
         if status == 'ready':
+            # System working
             self._set_green(True)
         elif status == 'verifying':
+            # Person detected / verification in progress
+            self._set_red(True)
+        elif status == 'guest':
+            # Guest mode
             self._set_yellow(True)
         elif status == 'alert':
+            # Alert state
             self._set_red(True)
         elif status == 'recording':
             # Flash red LED for recording
@@ -157,6 +164,7 @@ class LEDController:
         try:
             GPIO.output(self.brightness_pin, GPIO.HIGH)
             logger.info("💡 High brightness LED turned on")
+            self.brightness_on = True
 
             if duration:
                 if self.brightness_timer:
@@ -177,6 +185,7 @@ class LEDController:
         try:
             GPIO.output(self.brightness_pin, GPIO.LOW)
             logger.info("💡 High brightness LED turned off")
+            self.brightness_on = False
 
             if self.brightness_timer:
                 self.brightness_timer.cancel()
@@ -186,33 +195,29 @@ class LEDController:
             logger.error(f"Error controlling brightness LED: {e}")
 
     def start_guest_mode_pulse(self):
-        """Start pulsing yellow LED for guest mode"""
+        """Guest mode indicator: set steady yellow HIGH"""
         if self.guest_mode_active:
             return  # Already active
-
         self.guest_mode_active = True
-        logger.info("💛 Starting guest mode yellow LED pulse")
-
-        def pulse():
-            while self.guest_mode_active:
-                self._set_yellow(True)
-                time.sleep(self.guest_mode_pulse_interval)
-                self._set_yellow(False)
-                time.sleep(self.guest_mode_pulse_interval)
-
-        self.guest_mode_timer = threading.Thread(target=pulse, daemon=True)
-        self.guest_mode_timer.start()
+        logger.info("💛 Guest mode active - yellow LED ON")
+        try:
+            self._set_yellow(True)
+        except Exception as e:
+            logger.error(f"Error setting guest mode LED: {e}")
 
     def stop_guest_mode_pulse(self):
-        """Stop pulsing yellow LED for guest mode"""
+        """Stop guest mode indicator and turn yellow OFF"""
         if not self.guest_mode_active:
             return
 
         self.guest_mode_active = False
-        logger.info("💛 Stopping guest mode yellow LED pulse")
+        logger.info("💛 Guest mode ended - yellow LED OFF")
 
         if self.guest_mode_timer:
-            self.guest_mode_timer.join(timeout=2.0)  # Wait for thread to finish
+            try:
+                self.guest_mode_timer.join(timeout=2.0)
+            except Exception:
+                pass
             self.guest_mode_timer = None
 
         # Turn off yellow LED
@@ -287,109 +292,9 @@ class SpeakerController:
 
 
 class ExternalLightsController:
-    """Control external lights via their mode button (GPIO3).
-
-    Modes cycle on single-click: High -> Low -> Blinking -> Off
-    Double-click: SOS
-    From SOS: single-click exits (per device behavior)
-    """
-
+    """Deprecated click-based controller retained for compatibility (no-op)."""
     def __init__(self, pin: int):
-        self.button = ButtonEmulator(pin)
-        # Start unknown to allow user to sync via keyboard clicks with real device
-        self.mode = 'unknown'  # 'unknown'|'off'|'high'|'low'|'blink'|'sos'
-        self._motion_timer = None
-
-    def _single_click(self):
-        self.button.press(HARDWARE['button_press_ms'])
-        gap = HARDWARE.get('lights_click_gap_s', 1.0)
-        time.sleep(gap)
-
-    def _double_click(self):
-        self.button.double_click(HARDWARE['button_press_ms'], HARDWARE['double_click_gap_ms'])
-
-    def _init_to_off(self):
-        # Deprecated: avoid forced state on startup; rely on user sync via keyboard
-        logger.info("ℹ️ Skipping forced initialization of external lights state")
-
-    def set_off(self):
-        # Maintain legacy helper, but prefer click-based control
-        if self.mode == 'sos':
-            # Exit SOS: single click to OFF per device behavior
-            self._single_click()
-            self.mode = 'off'
-            logger.info("💡 Lights mode: off")
-            print("Lights mode: off")
-            return
-        # Cycle to OFF using single clicks (up to 3): high->low->blink->off
-        for _ in range(3):
-            if self.mode == 'off':
-                break
-            self._single_click()
-            self.mode = self._next_mode_on_single(self.mode)
-        logger.info(f"💡 Lights mode: {self.mode}")
-        print(f"Lights mode: {self.mode}")
-
-    def set_high(self):
-        # From off/unknown: one click to High; otherwise cycle until High
-        target = 'high'
-        self._click_until(target)
-
-    def set_low(self):
-        self._click_until('low')
-
-    def set_blink(self):
-        self._click_until('blink')
-
-    def set_sos(self):
-        logger.info("🚨 Setting external lights to SOS (double click)")
-        self._double_click()
-        self.mode = 'sos'
-        logger.info("💡 Lights mode: sos")
-        print("Lights mode: sos")
-
-    # --- New click-based control for real device synchronization ---
-    def _next_mode_on_single(self, current: str) -> str:
-        if current in ('unknown', 'off'):
-            return 'high'
-        if current == 'high':
-            return 'low'
-        if current == 'low':
-            return 'blink'
-        if current == 'blink':
-            return 'off'
-        if current == 'sos':
-            return 'off'
-        return 'high'
-
-    def single_click(self):
-        """Emulate one physical button click and update internal mode accordingly."""
-        self._single_click()
-        self.mode = self._next_mode_on_single(self.mode)
-        logger.info(f"💡 Lights mode: {self.mode}")
-        print(f"Lights mode: {self.mode}")
-
-    def double_click(self):
-        """Emulate double click -> SOS mode."""
-        self._double_click()
-        self.mode = 'sos'
-        logger.info("💡 Lights mode: sos")
-        print("Lights mode: sos")
-
-    def _click_until(self, target: str):
-        """Perform the minimum number of single clicks to reach target mode from current."""
-        # If in SOS, single click sends to OFF first
-        if self.mode == 'sos':
-            self._single_click()
-            self.mode = 'off'
-        # Iterate up to 4 states to reach target
-        for _ in range(4):
-            if self.mode == target:
-                break
-            self._single_click()
-            self.mode = self._next_mode_on_single(self.mode)
-        logger.info(f"💡 Lights mode: {self.mode}")
-        print(f"Lights mode: {self.mode}")
+        self.mode = 'off'
 
     def motion_high_for(self, seconds: int):
         # Cancel previous timer
@@ -434,11 +339,12 @@ class HardwareManager:
 
             # Initialize external devices
             self.speaker_controller = SpeakerController(HARDWARE['speaker_button_pin'])
-            self.lights_controller = ExternalLightsController(HARDWARE['lights_button_pin'])
+            # Remove click-based lights; use LEDController.brightness_pin MOSFET directly
 
-            # Startup behavior: power on speaker, ensure lights are OFF
+            # Startup behavior: power on speaker, ensure MOSFET LED is OFF
             self.speaker_controller.power_on()
-            self.lights_controller.set_off()
+            if self.led_controller:
+                self.led_controller.turn_off_brightness()
 
             logger.info("✅ Hardware manager initialized successfully")
 
@@ -454,12 +360,11 @@ class HardwareManager:
             return
 
         if self.led_controller:
-            self.led_controller.turn_on_brightness(CCTV['led_brightness_duration'])
             self.led_controller.set_status('verifying')
 
-        # External lights to high brightness for configured duration
-        if self.lights_controller:
-            self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
+        # Drive MOSFET LED ON for motion window
+        if self.led_controller:
+            self.led_controller.turn_on_brightness(HARDWARE['motion_light_duration_s'])
 
         # Suppress further motion triggers until this window ends
         self._motion_suppress_until = current_time + HARDWARE['motion_light_duration_s']
@@ -469,27 +374,18 @@ class HardwareManager:
         if self.led_controller:
             self.led_controller.set_status(status)
 
-    # Convenience methods for external devices
-    def lights_sos(self):
-        if self.lights_controller:
-            self.lights_controller.set_sos()
-
+    # Convenience methods for MOSFET LED
     def lights_off(self):
-        if self.lights_controller:
-            self.lights_controller.set_off()
+        if self.led_controller:
+            self.led_controller.turn_off_brightness()
 
     def lights_high_for_motion(self):
-        if self.lights_controller:
-            self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
+        if self.led_controller:
+            self.led_controller.turn_on_brightness(HARDWARE['motion_light_duration_s'])
 
-    # Expose raw click semantics for keyboard sync
-    def lights_single_click(self):
-        if self.lights_controller:
-            self.lights_controller.single_click()
-
-    def lights_double_click(self):
-        if self.lights_controller:
-            self.lights_controller.double_click()
+    def lights_on(self):
+        if self.led_controller:
+            self.led_controller.turn_on_brightness()
 
     def cleanup(self):
         """Cleanup all hardware resources"""
@@ -524,34 +420,7 @@ class HardwareManager:
         if self.led_controller:
             self.led_controller.stop_guest_mode_pulse()
 
-    def cycle_lights_mode(self):
-        """Cycle external lights through modes: off -> high -> low -> blink -> sos -> off"""
-        if not self.lights_controller:
-            return
-        current_mode = getattr(self.lights_controller, 'mode', 'unknown')
-        next_map = {
-            'unknown': 'high',
-            'off': 'high',
-            'high': 'low',
-            'low': 'blink',
-            'blink': 'sos',
-            'sos': 'off',
-        }
-        target = next_map.get(current_mode, 'high')
-        try:
-            if target == 'off':
-                self.lights_controller.set_off()
-            elif target == 'high':
-                self.lights_controller.set_high()
-            elif target == 'low':
-                self.lights_controller.set_low()
-            elif target == 'blink':
-                self.lights_controller.set_blink()
-            elif target == 'sos':
-                self.lights_controller.set_sos()
-            logger.info(f"💡 Lights mode changed: {current_mode} -> {target}")
-        except Exception as e:
-            logger.error(f"Failed to cycle lights mode from {current_mode} to {target}: {e}")
+    
 
 
 # Global hardware manager instance
