@@ -236,12 +236,19 @@ class CCTVSystem:
                 elif key == ord('m'):
                     self.toggle_motion_detection()
                 elif key == ord('l'):
-                    # Cycle external lights/LED modes
+                    # Single-click the real device button (cycle modes)
                     if self.hardware_manager:
                         try:
-                            self.hardware_manager.cycle_lights_mode()
+                            self.hardware_manager.lights_single_click()
                         except Exception as e:
-                            logger.error(f"Failed to cycle lights mode: {e}")
+                            logger.error(f"Failed to single-click lights: {e}")
+                elif key == ord('k'):
+                    # Double-click -> SOS mode; single-click again to OFF
+                    if self.hardware_manager:
+                        try:
+                            self.hardware_manager.lights_double_click()
+                        except Exception as e:
+                            logger.error(f"Failed to double-click lights: {e}")
 
             logger.info("👋 CCTV System stopped")
 

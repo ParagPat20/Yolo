@@ -296,8 +296,8 @@ class ExternalLightsController:
 
     def __init__(self, pin: int):
         self.button = ButtonEmulator(pin)
-        self.mode = 'unknown'  # Track our expected mode
-        self._init_to_off()
+        # Start unknown to allow user to sync via keyboard clicks with real device
+        self.mode = 'unknown'  # 'unknown'|'off'|'high'|'low'|'blink'|'sos'
         self._motion_timer = None
 
     def _single_click(self):
@@ -309,48 +309,87 @@ class ExternalLightsController:
         self.button.double_click(HARDWARE['button_press_ms'], HARDWARE['double_click_gap_ms'])
 
     def _init_to_off(self):
-        # Ensure OFF by performing three clicks with proper gaps
-        logger.info("💡 Initializing external lights to OFF (3 clicks)")
-        self._single_click()
-        self._single_click()
-        self._single_click()
-        self.mode = 'off'
+        # Deprecated: avoid forced state on startup; rely on user sync via keyboard
+        logger.info("ℹ️ Skipping forced initialization of external lights state")
 
     def set_off(self):
-        # Requirement update: from HIGH to OFF requires 3 single clicks, with 1s gaps
+        # Maintain legacy helper, but prefer click-based control
         if self.mode == 'sos':
-            # Exit SOS first: single click
+            # Exit SOS: single click to OFF per device behavior
             self._single_click()
-        self._single_click()
-        self._single_click()
-        self._single_click()
-        self.mode = 'off'
+            self.mode = 'off'
+            logger.info("💡 Lights mode: off")
+            print("Lights mode: off")
+            return
+        # Cycle to OFF using single clicks (up to 3): high->low->blink->off
+        for _ in range(3):
+            if self.mode == 'off':
+                break
+            self._single_click()
+            self.mode = self._next_mode_on_single(self.mode)
+        logger.info(f"💡 Lights mode: {self.mode}")
+        print(f"Lights mode: {self.mode}")
 
     def set_high(self):
-        # Requirement: one click to turn ON (High)
-        self._single_click()
-        self.mode = 'high'
+        # From off/unknown: one click to High; otherwise cycle until High
+        target = 'high'
+        self._click_until(target)
 
     def set_low(self):
-        # From off: two clicks to Low (off->high->low)
-        if self.mode != 'off':
-            self.set_off()
-        self._single_click()
-        self._single_click()
-        self.mode = 'low'
+        self._click_until('low')
 
     def set_blink(self):
-        # From off: three clicks to Blinking
-        if self.mode != 'off':
-            self.set_off()
-        for _ in range(3):
-            self._single_click()
-        self.mode = 'blink'
+        self._click_until('blink')
 
     def set_sos(self):
         logger.info("🚨 Setting external lights to SOS (double click)")
         self._double_click()
         self.mode = 'sos'
+        logger.info("💡 Lights mode: sos")
+        print("Lights mode: sos")
+
+    # --- New click-based control for real device synchronization ---
+    def _next_mode_on_single(self, current: str) -> str:
+        if current in ('unknown', 'off'):
+            return 'high'
+        if current == 'high':
+            return 'low'
+        if current == 'low':
+            return 'blink'
+        if current == 'blink':
+            return 'off'
+        if current == 'sos':
+            return 'off'
+        return 'high'
+
+    def single_click(self):
+        """Emulate one physical button click and update internal mode accordingly."""
+        self._single_click()
+        self.mode = self._next_mode_on_single(self.mode)
+        logger.info(f"💡 Lights mode: {self.mode}")
+        print(f"Lights mode: {self.mode}")
+
+    def double_click(self):
+        """Emulate double click -> SOS mode."""
+        self._double_click()
+        self.mode = 'sos'
+        logger.info("💡 Lights mode: sos")
+        print("Lights mode: sos")
+
+    def _click_until(self, target: str):
+        """Perform the minimum number of single clicks to reach target mode from current."""
+        # If in SOS, single click sends to OFF first
+        if self.mode == 'sos':
+            self._single_click()
+            self.mode = 'off'
+        # Iterate up to 4 states to reach target
+        for _ in range(4):
+            if self.mode == target:
+                break
+            self._single_click()
+            self.mode = self._next_mode_on_single(self.mode)
+        logger.info(f"💡 Lights mode: {self.mode}")
+        print(f"Lights mode: {self.mode}")
 
     def motion_high_for(self, seconds: int):
         # Cancel previous timer
@@ -442,6 +481,15 @@ class HardwareManager:
     def lights_high_for_motion(self):
         if self.lights_controller:
             self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
+
+    # Expose raw click semantics for keyboard sync
+    def lights_single_click(self):
+        if self.lights_controller:
+            self.lights_controller.single_click()
+
+    def lights_double_click(self):
+        if self.lights_controller:
+            self.lights_controller.double_click()
 
     def cleanup(self):
         """Cleanup all hardware resources"""
