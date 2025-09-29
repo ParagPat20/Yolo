@@ -476,6 +476,35 @@ class HardwareManager:
         if self.led_controller:
             self.led_controller.stop_guest_mode_pulse()
 
+    def cycle_lights_mode(self):
+        """Cycle external lights through modes: off -> high -> low -> blink -> sos -> off"""
+        if not self.lights_controller:
+            return
+        current_mode = getattr(self.lights_controller, 'mode', 'unknown')
+        next_map = {
+            'unknown': 'high',
+            'off': 'high',
+            'high': 'low',
+            'low': 'blink',
+            'blink': 'sos',
+            'sos': 'off',
+        }
+        target = next_map.get(current_mode, 'high')
+        try:
+            if target == 'off':
+                self.lights_controller.set_off()
+            elif target == 'high':
+                self.lights_controller.set_high()
+            elif target == 'low':
+                self.lights_controller.set_low()
+            elif target == 'blink':
+                self.lights_controller.set_blink()
+            elif target == 'sos':
+                self.lights_controller.set_sos()
+            logger.info(f"💡 Lights mode changed: {current_mode} -> {target}")
+        except Exception as e:
+            logger.error(f"Failed to cycle lights mode from {current_mode} to {target}: {e}")
+
 
 # Global hardware manager instance
 hardware_manager = None

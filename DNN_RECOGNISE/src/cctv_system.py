@@ -235,6 +235,13 @@ class CCTVSystem:
                     self.reset_system()
                 elif key == ord('m'):
                     self.toggle_motion_detection()
+                elif key == ord('l'):
+                    # Cycle external lights/LED modes
+                    if self.hardware_manager:
+                        try:
+                            self.hardware_manager.cycle_lights_mode()
+                        except Exception as e:
+                            logger.error(f"Failed to cycle lights mode: {e}")
 
             logger.info("👋 CCTV System stopped")
 
