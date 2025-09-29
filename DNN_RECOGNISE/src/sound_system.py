@@ -216,25 +216,25 @@ class SoundSystem:
             }
         else:  # English
             return {
-                'person_detected': "Person detected. Please look at the camera.",
-                'face_verification_request': "Please show your face. Look at the camera for face verification.",
+                'person_detected': "Please look at the camera.",
+                'face_verification_request': "Look at the camera for face verification.",
                 'face_verification_reminder': [
-                    "Please show your face for verification.",
+                    "Show your face for verification.",
                     "Face verification required - Look at camera.",
                     "Final warning - Show your face now."
                 ],
                 'verification_timeout': "Time's up! Face verification failed.",
                 'unknown_person_alert': "Unknown person detected! Security alert!",
                 'security_breach': "Security breach! Unauthorized person detected!",
-                'known_person_greeting': "Hello {name}! Welcome.",
+                'known_person_greeting': "Welcome.",
                 'time_based_greeting': {
                     'morning': "Good morning!",
                     'afternoon': "Good afternoon!",
                     'evening': "Good evening!"
                 },
-                'welcome_back': "Welcome back {name}!",
-                'guest_mode_activated': "Guest mode activated. {host_name} has a guest.",
-                'guest_mode_expired': "Guest mode expired. Reverting to normal security protocols."
+                'welcome_back': "Welcome back!",
+                'guest_mode_activated': "Guest mode activated.",
+                'guest_mode_expired': "Guest mode expired."
             }
     
     def _generate_wav_file(self, text: str, filepath: str, model_path: str, noise_scale: float, length_scale: float):
