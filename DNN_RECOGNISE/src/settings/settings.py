@@ -6,9 +6,9 @@ import os
 # Camera settings
 CAMERA = {
     'index': 0,  # Default camera (0 is usually built-in webcam)
-    'width': 640,  # Higher resolution for better detection
-    'height': 480,
-    'fps': 60,  # Target FPS
+    'width': 1280,  # Higher resolution for better detection
+    'height': 720,
+    'fps': 30,  # Target FPS
 }
 
 # Advanced person detection settings
@@ -78,10 +78,10 @@ FACE_RECOGNITION = {
 # Advanced person tracking settings
 PERSON_TRACKING = {
     'tracking_method': 'bytetrack',  # Options: 'bytetrack', 'deepsort', 'sort'
-    'max_disappeared': 30,  # Max frames a person can disappear before removal (increased for stability)
-    'max_distance': 150,  # Max distance for person association (increased for better tracking)
-    'track_buffer': 30,  # Track buffer for ByteTrack (increased)
-    'match_threshold': 0.6,  # Matching threshold for tracking (more lenient)
+    'max_disappeared': 8,  # Max frames a person can disappear before removal (1.5 seconds at 60 FPS)
+    'max_distance': 150,  # Max distance for person association (10 pixels at 640x480)
+    'track_buffer': 30,  # Track buffer for ByteTrack (30)
+    'match_threshold': 0.6,  # Matching threshold for tracking (0.6)
     'frame_rate': 60,  # Camera frame rate
 }
 

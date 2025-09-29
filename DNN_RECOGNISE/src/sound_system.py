@@ -216,8 +216,8 @@ class SoundSystem:
             }
         else:  # English
             return {
-                'person_detected': "Please look at the camera.",
-                'face_verification_request': "Look at the camera for face verification.",
+                'person_detected': "Hello!",
+                'face_verification_request': "Please look at the camera for face verification.",
                 'face_verification_reminder': [
                     "Show your face for verification.",
                     "Face verification required - Look at camera.",
