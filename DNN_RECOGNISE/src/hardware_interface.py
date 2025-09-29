@@ -307,36 +307,23 @@ class ExternalLightsController:
         self.button.double_click(HARDWARE['button_press_ms'], HARDWARE['double_click_gap_ms'])
 
     def _init_to_off(self):
-        # Best-effort: cycle 4 clicks to reach Off regardless of start position
-        logger.info("💡 Initializing external lights to OFF")
-        for _ in range(4):
-            self._single_click()
+        # Device requires 2 clicks to turn OFF reliably
+        logger.info("💡 Initializing external lights to OFF (2 clicks)")
+        self._single_click()
+        self._single_click()
         self.mode = 'off'
 
     def set_off(self):
+        # Requirement: send 2 clicks to turn OFF
         if self.mode == 'sos':
-            # Exit SOS: single click per device
+            # Exit SOS first: single click
             self._single_click()
-            self.mode = 'off'
-            return
-        # Compute clicks from current known mode
-        transitions = {
-            'high': 3,  # high->low->blink->off
-            'low': 2,   # low->blink->off
-            'blink': 1, # blink->off
-            'off': 0,
-            'unknown': 4
-        }
-        clicks = transitions.get(self.mode, 4)
-        for _ in range(clicks):
-            self._single_click()
+        self._single_click()
+        self._single_click()
         self.mode = 'off'
 
     def set_high(self):
-        # Ensure off first to have deterministic transition to high
-        if self.mode != 'off':
-            self.set_off()
-        # One single click to High
+        # Requirement: one click to turn ON (High)
         self._single_click()
         self.mode = 'high'
 
@@ -386,6 +373,7 @@ class HardwareManager:
         self.led_controller = None
         self.speaker_controller = None
         self.lights_controller = None
+        self._motion_suppress_until = 0.0
 
         self._init_hardware()
 
@@ -417,6 +405,11 @@ class HardwareManager:
 
     def _on_motion_detected(self):
         """Handle motion detection event"""
+        current_time = time.time()
+        # Suppress repeated motion actions while lights are already on for the motion window
+        if current_time < getattr(self, '_motion_suppress_until', 0.0):
+            return
+
         if self.led_controller:
             self.led_controller.turn_on_brightness(CCTV['led_brightness_duration'])
             self.led_controller.set_status('verifying')
@@ -424,6 +417,9 @@ class HardwareManager:
         # External lights to high brightness for configured duration
         if self.lights_controller:
             self.lights_controller.motion_high_for(HARDWARE['motion_light_duration_s'])
+
+        # Suppress further motion triggers until this window ends
+        self._motion_suppress_until = current_time + HARDWARE['motion_light_duration_s']
 
     def set_system_status(self, status: str):
         """Set overall system status"""
