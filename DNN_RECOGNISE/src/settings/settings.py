@@ -18,7 +18,7 @@ PERSON_DETECTION = {
     'nms_threshold': 0.4,  # Non-maximum suppression threshold
     'input_size': 640,  # Input size for YOLO model (416, 512, 640, 800)
     'use_gpu': False,  # Set to True if you have CUDA-enabled OpenCV
-    'track_classes': [0],  # COCO class IDs to track (0 = person)
+    'track_classes': [0],  # COCO class IDs to track (0 = person)z
 }
 
 # Face detection settings (enhanced)
@@ -77,12 +77,29 @@ FACE_RECOGNITION = {
 
 # Advanced person tracking settings
 PERSON_TRACKING = {
-    'tracking_method': 'bytetrack',  # Options: 'bytetrack', 'deepsort', 'sort'
-    'max_disappeared': 10,  # Max frames a person can disappear before removal (increased for stability)
-    'max_distance': 150,  # Max distance for person association (increased for better tracking)
-    'track_buffer': 30,  # Track buffer for ByteTrack (increased)
-    'match_threshold': 0.6,  # Matching threshold for tracking (more lenient)
-    'frame_rate': 60,  # Camera frame rate
+    # Tracking algorithm to use for person tracking.
+    # Options: 'bytetrack' (default, robust), 'deepsort', 'sort'
+    'tracking_method': 'bytetrack',
+
+    # Maximum number of frames a person can be missing before their track is removed.
+    # Higher values make tracking more stable but may keep lost tracks longer.
+    'max_disappeared': 20,
+
+    # Maximum pixel distance allowed between detections to associate them with the same person.
+    # Larger values allow for more movement but may increase false associations.
+    'max_distance': 170,
+
+    # Number of frames to keep a track "alive" in ByteTrack after last detection.
+    # Higher values help maintain identity through occlusions.
+    'track_buffer': 40,
+
+    # Minimum similarity threshold (0.0-1.0) for associating detections with existing tracks.
+    # Lower values are more lenient and may increase false matches.
+    'match_threshold': 0.6,
+
+    # Expected camera frame rate (frames per second) for tracking logic.
+    # Used to tune time-based parameters in the tracker.
+    'frame_rate': 10,
 }
 
 # Face tracking and recognition integration
