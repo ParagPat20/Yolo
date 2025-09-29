@@ -15,7 +15,11 @@ Wants=graphical.target network-online.target
 
 [Service]
 Type=simple
+User=jecon
+Group=jecon
 Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/jecon/.Xauthority
 WorkingDirectory=${PROJECT_DIR}
 ExecStart=${PROJECT_DIR}/start_cctv.sh
 Restart=always
