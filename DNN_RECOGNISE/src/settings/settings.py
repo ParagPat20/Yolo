@@ -34,7 +34,7 @@ FACE_DETECTION = {
 
 # Training settings. Number of images needed to train the model.
 TRAINING = {
-    'samples_needed': 10
+    'samples_needed': 100
 }
 
 # Model and data paths
