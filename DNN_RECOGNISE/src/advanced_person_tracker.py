@@ -1332,6 +1332,11 @@ class AdvancedPersonTracker:
                     track.final_warning_played = True
                 
                 if face_elapsed >= face_detected_timeout:
+                    # If guest mode is active (global or per-track), do NOT escalate
+                    if track.is_guest or (current_time < getattr(self, 'global_guest_mode_until', 0.0)):
+                        logger.info(f"👥 Guest mode active - suppressing unknown escalation for track {track.track_id}")
+                        track.verification_requested = False
+                        return
                     # Face is visible but still unknown after 10s timeout -> escalate to full unknown
                     logger.warning(f"⚠️ Person {track.track_id} remained unknown for {face_elapsed:.1f}s with face visible - escalating to UNKNOWN")
                     print(f"🚨 TIME'S UP! Person failed to verify within 10 seconds of face detection")
@@ -1467,6 +1472,11 @@ class AdvancedPersonTracker:
                     logger.info(f"👻 Ghost track {track.track_id} - not triggering alarm")
                     track.verification_requested = False
                     return
+                # Suppress escalation during guest mode
+                if track.is_guest or (current_time < getattr(self, 'global_guest_mode_until', 0.0)):
+                    logger.info(f"👥 Guest mode active - suppressing unknown escalation for track {track.track_id}")
+                    track.verification_requested = False
+                    return
                 
                 # Mark as unknown person - set all unknown flags
                 logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
@@ -1562,6 +1572,10 @@ class AdvancedPersonTracker:
     def _trigger_unknown_person_alarm(self, track: PersonTrack, current_time: float):
         """Trigger immediate alarm for unknown person with 2-minute duration"""
         try:
+            # Do not trigger alarm if guest mode applies
+            if track.is_guest or (current_time < getattr(self, 'global_guest_mode_until', 0.0)):
+                logger.info(f"👥 Guest mode active - skipping alarm for track {track.track_id}")
+                return
             logger.warning(f"🚨 IMMEDIATE ALARM TRIGGERED for unknown person {track.track_id}")
             print(f"🚨 SECURITY ALERT! Unknown person at location ({track.center[0]:.0f}, {track.center[1]:.0f})")
             print("🚨 UNAUTHORIZED ACCESS - Security breach detected!")
