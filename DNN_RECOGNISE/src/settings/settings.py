@@ -111,8 +111,8 @@ HARDWARE = {
     'pir_pin': 15,
 
     # Existing status LED pins (if used elsewhere)
-    'led_brightness_pin': 18,  # GPIO pin for high brightness LED
-    'led_green_pin': 22,       # GPIO pin for green status LED
+    'led_brightness_pin': 3,  # GPIO pin for high brightness LED
+    'led_green_pin': 18,       # GPIO pin for green status LED
     'led_yellow_pin': 23,      # GPIO pin for yellow status LED
     'led_red_pin': 24,         # GPIO pin for red status LED
 

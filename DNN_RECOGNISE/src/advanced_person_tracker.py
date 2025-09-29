@@ -38,13 +38,8 @@ try:
     from picamera2 import Picamera2, Preview
     PICAMERA2_AVAILABLE = True
     logger.info("📷 Picamera2 available for Raspberry Pi")
-    try:
-        from libcamera import controls as LIBCAM_CONTROLS
-    except Exception:
-        LIBCAM_CONTROLS = None
 except ImportError:
     PICAMERA2_AVAILABLE = False
-    LIBCAM_CONTROLS = None
     logger.warning("📷 Picamera2 not available, falling back to OpenCV")
 
 # Try to import hardware interface
@@ -2133,16 +2128,11 @@ def initialize_camera(camera_index: int = 0):
                 display="lores"
             )
             picam2.configure(preview_config)
-            # Prefer continuous autofocus; fall back to normal AF
-            if LIBCAM_CONTROLS and hasattr(LIBCAM_CONTROLS, 'AfModeEnum'):
-                try:
-                    picam2.set_controls({"AfMode": LIBCAM_CONTROLS.AfModeEnum.Continuous, "FrameRate": CAMERA['fps']})
-                    logger.info("📷 Continuous AF enabled (libcamera controls)")
-                except Exception as e:
-                    logger.warning(f"Continuous AF set failed, falling back to normal AF: {e}")
-                    picam2.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})
-            else:
-                picam2.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})  # Normal AF
+            # Picamera Module 2: no AF controls; set frame rate only
+            try:
+                picam2.set_controls({"FrameRate": CAMERA['fps']})
+            except Exception:
+                pass
             
             # Start camera
             picam2.start()
@@ -2222,15 +2212,7 @@ if __name__ == "__main__":
                 logger.warning("Failed to grab frame")
                 continue
             
-            # If continuous AF not available, periodically trigger AF in auto mode
-            if PICAMERA2_AVAILABLE and hasattr(cam, 'set_controls'):
-                current_time = time.time()
-                if (not LIBCAM_CONTROLS or not hasattr(LIBCAM_CONTROLS, 'AfModeEnum')) and current_time - last_af_trigger > 2.0:
-                    try:
-                        cam.set_controls({"AfTrigger": 0})
-                        last_af_trigger = current_time
-                    except Exception as e:
-                        logger.debug(f"AF trigger failed: {e}")
+            # No autofocus on Picamera Module 2; do not trigger AF
             
             # Process frame
             annotated_frame, tracks = tracker.process_frame(frame)

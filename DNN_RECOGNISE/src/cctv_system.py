@@ -103,10 +103,6 @@ class CCTVSystem:
             # Try to use `picamera2` first
             try:
                 from picamera2 import Picamera2, Preview
-                try:
-                    from libcamera import controls as LIBCAM_CONTROLS
-                except Exception:
-                    LIBCAM_CONTROLS = None
                 self.camera = Picamera2()
 
                 # Configure with high resolution for CCTV
@@ -116,18 +112,12 @@ class CCTVSystem:
                     display="lores"
                 )
                 self.camera.configure(preview_config)
-                # Prefer continuous autofocus if available, else normal AF
-                if LIBCAM_CONTROLS and hasattr(LIBCAM_CONTROLS, 'AfModeEnum'):
-                    try:
-                        self.camera.set_controls({"AfMode": LIBCAM_CONTROLS.AfModeEnum.Continuous, "FrameRate": CAMERA['fps']})
-                        self._continuous_af_enabled = True
-                    except Exception as e:
-                        logger.warning(f"Continuous AF set failed, using normal AF: {e}")
-                        self.camera.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})
-                        self._continuous_af_enabled = False
-                else:
-                    self.camera.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})
-                    self._continuous_af_enabled = False
+                # Picamera Module 2 has no AF controls; set only frame rate
+                try:
+                    self.camera.set_controls({"FrameRate": CAMERA['fps']})
+                except Exception:
+                    pass
+                self._continuous_af_enabled = False
                 self.camera.start()
 
                 logger.info(f"✅ Picamera2 initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps with autofocus")
@@ -210,15 +200,7 @@ class CCTVSystem:
                     logger.warning("Failed to grab frame")
                     continue
 
-                # If continuous AF not available, periodically trigger AF in auto mode
-                if hasattr(self.camera, 'set_controls') and not self._continuous_af_enabled:
-                    current_time = time.time()
-                    if current_time - last_af_trigger > 2.0:
-                        try:
-                            self.camera.set_controls({"AfTrigger": 0})
-                            last_af_trigger = current_time
-                        except Exception as e:
-                            logger.debug(f"AF trigger failed: {e}")
+                # No autofocus for Picamera Module 2; skip AF triggers
 
                 # Process frame with person tracker
                 annotated_frame, tracks = self.person_tracker.process_frame(frame)
