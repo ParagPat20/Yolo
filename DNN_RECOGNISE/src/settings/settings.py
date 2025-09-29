@@ -6,9 +6,9 @@ import os
 # Camera settings
 CAMERA = {
     'index': 0,  # Default camera (0 is usually built-in webcam)
-    'width': 640,  # Higher resolution for better detection
-    'height': 480,
-    'fps': 60,  # Target FPS
+    'width': 1640,  # Higher resolution for better detection
+    'height': 1232,
+    'fps': 10,  # Target FPS
 }
 
 # Advanced person detection settings
