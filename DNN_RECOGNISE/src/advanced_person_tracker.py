@@ -108,6 +108,9 @@ class PersonTrack:
     # Enhanced verification tracking
     verification_reminder_count: int = 0  # Number of verification reminders sent
     last_verification_reminder: float = 0.0  # Time of last verification reminder
+    
+    # Ghost track detection
+    ghost_track: bool = False  # Mark tracks that are no longer valid (e.g., hand detection)
 
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
@@ -641,8 +644,13 @@ class ByteTracker:
         for detection_idx in unmatched_detections:
             detection = new_detections[detection_idx]
             
-            # Only create new track if confidence is high enough
-            if detection['confidence'] > 0.6:
+            # Only create new track if confidence is high enough AND person is large enough
+            # This helps avoid detecting hands or small objects as people
+            bbox = detection['bbox']
+            person_area = bbox[2] * bbox[3]  # width * height
+            min_person_area = 10000  # Minimum area for a person (adjust based on your camera resolution)
+            
+            if detection['confidence'] > 0.7 and person_area > min_person_area:
                 new_track = PersonTrack(
                     track_id=self.next_id,
                     bbox=detection['bbox'],
@@ -796,6 +804,9 @@ class AdvancedPersonTracker:
 
         # Check for alarm timeouts and stop expired alarms
         self._check_alarm_timeouts(person_tracks)
+        
+        # Clean up ghost tracks (tracks that are no longer valid)
+        self._cleanup_ghost_tracks(person_tracks)
 
         # Draw annotations
         annotated_frame = self._draw_annotations(frame, person_tracks)
@@ -985,6 +996,35 @@ class AdvancedPersonTracker:
                     # Reset alarm end time
                     track.alarm_end_time = 0.0
                     logger.info(f"✅ Alarm timeout completed for track {track.track_id}")
+
+    def _cleanup_ghost_tracks(self, tracks: List[PersonTrack]):
+        """Clean up ghost tracks that are no longer valid (e.g., from hand detection)"""
+        current_time = time.time()
+        tracks_to_remove = []
+        
+        for track in tracks:
+            # Check if track is marked as ghost or has been inactive too long
+            if (getattr(track, 'ghost_track', False) or 
+                (current_time - track.last_seen > 5.0 and not track.is_known)):
+                
+                # Stop any alarm for this track
+                if hasattr(track, 'alarm_end_time') and track.alarm_end_time > 0:
+                    if self.sound_player and self.sound_player.is_alarm_playing():
+                        logger.info(f"🔇 Stopping alarm for ghost track {track.track_id}")
+                        self.sound_player.stop_alarm()
+                
+                # Stop recording if active
+                if track.is_recording:
+                    self._stop_recording(track.track_id)
+                
+                tracks_to_remove.append(track.track_id)
+                logger.info(f"🧹 Removing ghost track {track.track_id} (inactive for {current_time - track.last_seen:.1f}s)")
+        
+        # Remove ghost tracks from tracker
+        for track_id in tracks_to_remove:
+            if track_id in self.tracker.tracks:
+                del self.tracker.tracks[track_id]
+                logger.info(f"🗑️ Removed ghost track {track_id} from tracker")
 
     def _update_recordings(self, frame: np.ndarray, tracks: List[PersonTrack]):
         """Update active recordings for unknown persons"""
@@ -1323,6 +1363,13 @@ class AdvancedPersonTracker:
     
     def _handle_no_face_detected(self, track: PersonTrack, current_time: float):
         """Handle when no face is detected for a person - enhanced for CCTV with repeated verification requests"""
+        # Check if this track has been inactive for too long (ghost track detection)
+        time_since_last_seen = current_time - track.last_seen
+        if time_since_last_seen > 3.0:  # If track hasn't been seen for 3 seconds, it's likely a ghost
+            logger.info(f"👻 Ghost track detected: {track.track_id} not seen for {time_since_last_seen:.1f}s - marking for cleanup")
+            track.ghost_track = True  # Mark as ghost track
+            return
+        
         if track.needs_face_check and not track.verification_requested and not track.alert_sent:
             # New person detected but no face visible - request verification
             track.verification_requested = True
@@ -1344,6 +1391,12 @@ class AdvancedPersonTracker:
             self._play_verification_request(track)
 
         elif track.verification_requested:
+            # Check if this is a ghost track - if so, stop verification
+            if getattr(track, 'ghost_track', False):
+                logger.info(f"👻 Ghost track {track.track_id} - stopping verification requests")
+                track.verification_requested = False
+                return
+                
             # Enhanced verification logic with repeated requests and progressive escalation
             time_since_request = current_time - track.verification_start_time
             time_since_last_reminder = current_time - getattr(track, 'last_verification_reminder', 0)
@@ -1379,6 +1432,12 @@ class AdvancedPersonTracker:
 
             # Check if we've passed the "unknown" threshold (10 seconds) - start recording and alarm
             if time_since_request > unknown_timeout and not track.alert_sent:
+                # Check if this is a ghost track - don't trigger alarm for ghost tracks
+                if getattr(track, 'ghost_track', False):
+                    logger.info(f"👻 Ghost track {track.track_id} - not triggering alarm")
+                    track.verification_requested = False
+                    return
+                
                 # Mark as unknown person - set all unknown flags
                 logger.warning(f"⚠️ Person {track.track_id} not verified after {unknown_timeout}s - marking as unknown")
                 track.alert_sent = True  # Prevent multiple alerts

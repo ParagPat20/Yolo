@@ -78,7 +78,7 @@ FACE_RECOGNITION = {
 # Advanced person tracking settings
 PERSON_TRACKING = {
     'tracking_method': 'bytetrack',  # Options: 'bytetrack', 'deepsort', 'sort'
-    'max_disappeared': 30,  # Max frames a person can disappear before removal (increased for stability)
+    'max_disappeared': 10,  # Max frames a person can disappear before removal (increased for stability)
     'max_distance': 150,  # Max distance for person association (increased for better tracking)
     'track_buffer': 30,  # Track buffer for ByteTrack (increased)
     'match_threshold': 0.6,  # Matching threshold for tracking (more lenient)
