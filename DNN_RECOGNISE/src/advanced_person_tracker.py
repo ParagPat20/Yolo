@@ -1271,6 +1271,8 @@ class AdvancedPersonTracker:
                 track.verification_attempts = 0
                 track.last_verification_attempt = 0.0
                 track.final_warning_played = False
+                # Reset per-window audio guard so we only speak once per verification window
+                track.verification_audio_played = False
 
                 logger.info(f"🔍 Starting 20-second verification window for track {track.track_id}")
                 print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face for verification")
@@ -1432,6 +1434,8 @@ class AdvancedPersonTracker:
             track.verification_start_time = current_time
             track.verification_reminder_count = 0  # Track number of reminders sent
             track.last_verification_reminder = 0.0  # Track last reminder time
+            # Reset per-window audio guard so we only speak once per verification window
+            track.verification_audio_played = False
 
             logger.info(f"🔍 Person {track.track_id} detected - requesting face verification")
             print(f"🔍 Person detected at location ({track.center[0]:.0f}, {track.center[1]:.0f}) - Please show your face")
@@ -1504,6 +1508,16 @@ class AdvancedPersonTracker:
     def _play_verification_request(self, track: PersonTrack):
         """Play initial verification request - DISABLED during alarm"""
         try:
+            # Per-window one-shot guard: only speak once per verification window
+            if getattr(track, 'verification_audio_played', False):
+                logger.debug(f"🔇 Verification audio already played for track {track.track_id} in this window")
+                return
+            # Global short cooldown to avoid spam when tracks flicker (e.g., re-IDs)
+            now = time.time()
+            global_cooldown = CCTV.get('verification_cooldown', 5.0)
+            if now - getattr(self, 'last_global_verification_audio_time', 0.0) < global_cooldown:
+                logger.debug("🔇 Global verification cooldown active - skipping duplicate prompt")
+                return
             # Global silence window guard
             if time.time() < getattr(self, 'silence_until', 0.0):
                 logger.debug("🔇 Global silence active - skip verification request audio")
@@ -1513,8 +1527,7 @@ class AdvancedPersonTracker:
                 logger.info(f"🔇 Skipping verification request - alarm is playing for track {track.track_id}")
                 return
                 
-            # Enforce 10s cooldown per track for this sound
-            now = time.time()
+            # Enforce 10s cooldown per track for this sound (secondary safety)
             if now - getattr(track, 'last_verification_audio_time', 0.0) < 10.0:
                 logger.debug(f"⏳ Skipping verification audio due to cooldown for track {track.track_id}")
                 return
@@ -1525,6 +1538,9 @@ class AdvancedPersonTracker:
             if self.sound_player:
                 self.sound_player.play_verification_request()
                 track.last_verification_audio_time = now
+                track.verification_audio_played = True
+                # Set global cooldown timestamp
+                self.last_global_verification_audio_time = now
             
             if self.hardware_manager:
                 logger.info("🔍 Using hardware manager for verification request")
