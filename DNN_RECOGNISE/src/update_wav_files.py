@@ -68,6 +68,7 @@ class WAVFileUpdater:
         """Get all messages that need WAV files"""
         if self.language == 'gu':
             return {
+                'welcome_to_jech_aerotech': "જેચ એરોટેકમાં આપનું સ્વાગત છે.",
                 'person_detected': "વ્યક્તિ શોધાઈ ગઈ છે. કૃપા કરીને કેમેરા તરફ જુઓ.",
                 'face_verification_request': "કૃપા કરીને ચહેરો દેખાડો. ચહેરાની ઓળખ માટે કેમેરા તરફ જુઓ.",
                 'face_verification_reminder': [
@@ -90,6 +91,7 @@ class WAVFileUpdater:
             }
         else:  # English
             return {
+                'welcome_to_jech_aerotech': "Welcome to Jech Aerotech.",
                 'person_detected': "Hello!",
                 'face_verification_request': "Please look at the camera for face verification.",
                 'face_verification_reminder': [

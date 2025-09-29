@@ -74,6 +74,11 @@ class CCTVSystem:
             try:
                 self.sound_player = get_sound_player()
                 logger.info("🔊 Sound player initialized")
+                # Play startup welcome in background (non-blocking)
+                try:
+                    threading.Thread(target=self.sound_player.play_system_welcome, daemon=True).start()
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f"Failed to initialize sound player: {e}")
                 self.sound_player = None
