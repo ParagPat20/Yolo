@@ -6,7 +6,9 @@
 set -euo pipefail
 
 # Configuration
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Force project directory explicitly as requested
+PROJECT_DIR="/home/jecon/yolo/DNN_RECOGNISE"
+cd "$PROJECT_DIR"
 SCRIPT="$PROJECT_DIR/src/cctv_system.py"
 
 # Prefer existing DISPLAY, else try :0 (common on Raspberry Pi desktop)

@@ -42,14 +42,9 @@ class SoundPlayer:
     def __init__(self):
         """Initialize sound player"""
         self.is_enabled = AUDIO.get('use_mp3_sounds', True)
-        # Resolve paths relative to project root so they work under systemd
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-        wav_dir_cfg = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
-        self.wav_files_dir = wav_dir_cfg if os.path.isabs(wav_dir_cfg) else os.path.join(project_root, wav_dir_cfg)
-        alarm_cfg = AUDIO.get('alarm_sound_path', 'sounds/alarm.mp3')
-        self.alarm_sound_path = alarm_cfg if os.path.isabs(alarm_cfg) else os.path.join(project_root, alarm_cfg)
-        beep_cfg = AUDIO.get('verification_beep_path', 'sounds/verification_beep.mp3')
-        self.verification_beep_path = beep_cfg if os.path.isabs(beep_cfg) else os.path.join(project_root, beep_cfg)
+        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
+        self.alarm_sound_path = AUDIO.get('alarm_sound_path', 'sounds/alarm.mp3')
+        self.verification_beep_path = AUDIO.get('verification_beep_path', 'sounds/verification_beep.mp3')
         self.alarm_duration_minutes = AUDIO.get('alarm_duration_minutes', 2)
         self.alarm_loop_interval = AUDIO.get('alarm_loop_interval', 5)
         
