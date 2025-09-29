@@ -302,22 +302,26 @@ class ExternalLightsController:
 
     def _single_click(self):
         self.button.press(HARDWARE['button_press_ms'])
+        gap = HARDWARE.get('lights_click_gap_s', 1.0)
+        time.sleep(gap)
 
     def _double_click(self):
         self.button.double_click(HARDWARE['button_press_ms'], HARDWARE['double_click_gap_ms'])
 
     def _init_to_off(self):
-        # Device requires 2 clicks to turn OFF reliably
-        logger.info("💡 Initializing external lights to OFF (2 clicks)")
+        # Ensure OFF by performing three clicks with proper gaps
+        logger.info("💡 Initializing external lights to OFF (3 clicks)")
+        self._single_click()
         self._single_click()
         self._single_click()
         self.mode = 'off'
 
     def set_off(self):
-        # Requirement: send 2 clicks to turn OFF
+        # Requirement update: from HIGH to OFF requires 3 single clicks, with 1s gaps
         if self.mode == 'sos':
             # Exit SOS first: single click
             self._single_click()
+        self._single_click()
         self._single_click()
         self._single_click()
         self.mode = 'off'
