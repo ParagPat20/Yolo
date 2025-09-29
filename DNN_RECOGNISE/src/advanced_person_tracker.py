@@ -754,6 +754,13 @@ class AdvancedPersonTracker:
         # Recording management
         self.recording_active = {}  # Track active recordings {track_id: video_writer}
 
+        # Global guest mode window (host-driven)
+        self.global_guest_mode_until = 0.0
+        self.global_guest_host_name = None
+
+        # Global silence window after verification (no sounds)
+        self.silence_until = 0.0
+
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
         os.makedirs(PATHS.get('models_dir', 'models'), exist_ok=True)
@@ -1238,11 +1245,26 @@ class AdvancedPersonTracker:
             # Activate guest mode for 15 minutes after known person verification
             self._activate_guest_mode_for_known_person(track, current_time)
 
+            # Also open a global guest window so any new unknown appears as guest
+            self.global_guest_mode_until = current_time + CCTV.get('guest_mode_duration', 900.0)
+            self.global_guest_host_name = identity
+
+            # Set global silence window (10 minutes)
+            self.silence_until = current_time + 600.0
+
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
 
         else:
             # Unknown person detected - handle based on current verification state
             if not track.verification_requested and not track.alert_sent:
+                # If within global guest window, treat as guest immediately
+                if current_time < getattr(self, 'global_guest_mode_until', 0.0):
+                    track.is_guest = True
+                    track.guest_associated_with = getattr(self, 'global_guest_host_name', None)
+                    track.guest_mode_start_time = current_time
+                    logger.info(f"👥 Global guest window active - setting track {track.track_id} as guest with host {track.guest_associated_with}")
+                    return
+
                 # First time unknown -> start verification window
                 track.verification_requested = True
                 track.verification_start_time = current_time
@@ -1472,6 +1494,10 @@ class AdvancedPersonTracker:
     def _play_verification_request(self, track: PersonTrack):
         """Play initial verification request - DISABLED during alarm"""
         try:
+            # Global silence window guard
+            if time.time() < getattr(self, 'silence_until', 0.0):
+                logger.debug("🔇 Global silence active - skip verification request audio")
+                return
             # Check if alarm is playing - if so, don't play verification sounds
             if self.sound_player and self.sound_player.is_alarm_playing():
                 logger.info(f"🔇 Skipping verification request - alarm is playing for track {track.track_id}")
@@ -1504,6 +1530,10 @@ class AdvancedPersonTracker:
     def _play_verification_reminder(self, track: PersonTrack, reminder_count: int):
         """Play verification reminder with progressive urgency - DISABLED during alarm"""
         try:
+            # Global silence window guard
+            if time.time() < getattr(self, 'silence_until', 0.0):
+                logger.debug("🔇 Global silence active - skip verification reminder audio")
+                return
             # Check if alarm is playing - if so, don't play verification sounds
             if self.sound_player and self.sound_player.is_alarm_playing():
                 logger.info(f"🔇 Skipping verification reminder - alarm is playing for track {track.track_id}")
@@ -1550,7 +1580,7 @@ class AdvancedPersonTracker:
                 logger.info("🚨 Alarm already playing - skipping new alarm")
             
             # Play alarm sound only if not already playing
-            if not alarm_already_playing and self.sound_player:
+            if not alarm_already_playing and self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
                 try:
                     self.sound_player.play_alarm()
                     logger.info(f"🚨 Extended alarm started for unknown person {track.track_id}")
@@ -1751,7 +1781,7 @@ class AdvancedPersonTracker:
             self.sound_player.stop_alarm()
 
         # Play greeting audio files - DISABLED during alarm
-        if self.sound_player and not self.sound_player.is_alarm_playing():
+        if self.sound_player and not self.sound_player.is_alarm_playing() and time.time() >= getattr(self, 'silence_until', 0.0):
             try:
                 # Play both time-based greeting and welcome message
                 self.sound_player.play_time_based_greeting()
@@ -1782,7 +1812,7 @@ class AdvancedPersonTracker:
         logger.info(f"🎉 Welcoming back {person_name}")
 
         # Play welcome back audio file
-        if self.sound_player:
+        if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
             try:
                 self.sound_player.play_welcome_back(person_name)
             except Exception as e:
@@ -1816,7 +1846,7 @@ class AdvancedPersonTracker:
             print(f"👥 Guest mode activated for {track.identity} - 15 minutes of guest access")
             
             # Announce guest mode activation
-            if self.sound_player:
+            if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
                 try:
                     self.sound_player.play_guest_mode_activated(track.identity)
                 except Exception as e:
