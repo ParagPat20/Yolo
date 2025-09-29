@@ -1417,9 +1417,9 @@ class AdvancedPersonTracker:
                 track.last_verification_reminder = current_time
                 
                 # Progressive urgency in messages
-                if track.verification_reminder_count <= 2:
+                if track.verification_reminder_count <= 4:
                     message = "Please show your face for verification"
-                elif track.verification_reminder_count <= 4:
+                elif track.verification_reminder_count <= 8:
                     message = "Face verification required - Look at camera"
                 else:
                     message = "Final warning - Show your face now"
@@ -1482,7 +1482,10 @@ class AdvancedPersonTracker:
             
             if self.hardware_manager:
                 logger.info("🔍 Using hardware manager for verification request")
-                self.hardware_manager.request_verification()
+                if hasattr(self.hardware_manager, 'request_verification') and callable(getattr(self.hardware_manager, 'request_verification')):
+                    self.hardware_manager.request_verification()
+                else:
+                    logger.debug("Hardware manager has no request_verification(); skipping")
             else:
                 logger.info("🔍 Visual verification request only")
         except Exception as e:
@@ -1501,7 +1504,10 @@ class AdvancedPersonTracker:
                 self.sound_player.play_verification_reminder(reminder_count)
             
             if self.hardware_manager:
-                self.hardware_manager.request_verification()
+                if hasattr(self.hardware_manager, 'request_verification') and callable(getattr(self.hardware_manager, 'request_verification')):
+                    self.hardware_manager.request_verification()
+                else:
+                    logger.debug("Hardware manager has no request_verification(); skipping")
             else:
                 logger.info(f"🔍 Verification reminder {reminder_count} for track {track.track_id}")
         except Exception as e:
