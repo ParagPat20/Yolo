@@ -150,7 +150,7 @@ HARDWARE = {
     # Digital LDR (light sensor) configuration
     'ldr_enabled': True,
     'ldr_pin': 23,                  # GPIO pin for digital LDR (HIGH=bright, LOW=dark)
-    'ldr_active_high_means_bright': True,  # True: HIGH=bright, False: LOW=bright
+    'ldr_active_high_means_bright': False,  # True: HIGH=bright, False: LOW=bright
     'ldr_motion_enable_in_dark_only': True,  # If True, enable PIR only when dark
     'ldr_change_suppress_s': 1.0,   # Suppress PIR triggers for N seconds after light change
 }
