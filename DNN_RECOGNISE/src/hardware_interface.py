@@ -384,6 +384,13 @@ class HardwareManager:
         self.speaker_controller = None
         self.lights_controller = None
         self._motion_suppress_until = 0.0
+        # LDR state
+        self._ldr_enabled = HARDWARE.get('ldr_enabled', False)
+        self._ldr_pin = HARDWARE.get('ldr_pin', 23)
+        self._ldr_active_high_means_bright = HARDWARE.get('ldr_active_high_means_bright', True)
+        self._ldr_motion_enable_in_dark_only = HARDWARE.get('ldr_motion_enable_in_dark_only', True)
+        self._ldr_last_change_ts = 0.0
+        self._ldr_bright = None
 
         self._init_hardware()
 
@@ -408,6 +415,23 @@ class HardwareManager:
             if self.led_controller:
                 self.led_controller.turn_off_brightness()
 
+            # Initialize LDR GPIO after other setups
+            if self._ldr_enabled:
+                try:
+                    GPIO.setmode(GPIO.BCM)
+                    # Digital LDR output: pull-down to avoid floating
+                    GPIO.setup(self._ldr_pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+                    # Read initial state
+                    raw = GPIO.input(self._ldr_pin)
+                    self._ldr_bright = bool(raw) if self._ldr_active_high_means_bright else not bool(raw)
+                    self._ldr_last_change_ts = time.time()
+                    # Edge detect to track changes
+                    GPIO.add_event_detect(self._ldr_pin, GPIO.BOTH, callback=self._on_ldr_changed, bouncetime=100)
+                    logger.info(f"✅ LDR initialized on pin {self._ldr_pin} (bright={self._ldr_bright})")
+                except Exception as e:
+                    self._ldr_enabled = False
+                    logger.error(f"Failed to setup LDR on pin {self._ldr_pin}: {e}")
+
             logger.info("✅ Hardware manager initialized successfully")
 
         except Exception as e:
@@ -417,6 +441,17 @@ class HardwareManager:
     def _on_motion_detected(self):
         """Handle motion detection event"""
         current_time = time.time()
+        # If LDR gating is enabled, decide whether to allow PIR
+        if self._ldr_enabled:
+            # Suppress immediately after a light-level change
+            if current_time - self._ldr_last_change_ts < HARDWARE.get('ldr_change_suppress_s', 1.0):
+                logger.info("⏱️ PIR suppressed due to recent light change")
+                return
+            if self._ldr_motion_enable_in_dark_only:
+                # Allow PIR only when dark
+                if self._ldr_bright is True:
+                    logger.info("🌞 PIR suppressed because it's bright (LDR)")
+                    return
         # Suppress repeated motion actions while lights are already on for the motion window
         if current_time < getattr(self, '_motion_suppress_until', 0.0):
             return
@@ -429,6 +464,18 @@ class HardwareManager:
 
         # Suppress further motion triggers until this window ends
         self._motion_suppress_until = current_time + HARDWARE['motion_light_duration_s']
+
+    def _on_ldr_changed(self, channel):
+        """Handle LDR state change (brightness change)."""
+        try:
+            raw = GPIO.input(self._ldr_pin)
+            bright = bool(raw) if self._ldr_active_high_means_bright else not bool(raw)
+            if bright != self._ldr_bright:
+                self._ldr_bright = bright
+                self._ldr_last_change_ts = time.time()
+                logger.info(f"🔆 LDR changed: bright={self._ldr_bright}")
+        except Exception as e:
+            logger.error(f"Error reading LDR state: {e}")
 
     def set_system_status(self, status: str):
         """Set overall system status LEDs"""
