@@ -56,7 +56,7 @@ class PIRMotionDetector:
 
 
 class LEDController:
-    """LED Control Interface for status indicators and brightness"""
+    """LED control: green/yellow/red status and brightness MOSFET"""
 
     def __init__(self):
         self.brightness_pin = HARDWARE['led_brightness_pin']
@@ -68,22 +68,22 @@ class LEDController:
         self.brightness_on = False
         self.brightness_enabled = CCTV['led_auto_brightness']
 
-        # Guest mode variables
-        self.guest_mode_active = False
-        self.guest_mode_timer = None
-        self.guest_mode_pulse_interval = CCTV['guest_mode_yellow_pulse_interval']
+        # Blink control
+        self._green_blink = False
+        self._yellow_blink = False
+        self._green_thread = None
+        self._yellow_thread = None
 
         self._setup_gpio()
         self._init_led_states()
 
     def _setup_gpio(self):
-        """Setup GPIO pins for LEDs"""
+        """Setup GPIO pins for brightness and status LEDs"""
         try:
             GPIO.setmode(GPIO.BCM)
 
             # Setup output pins
-            pins = [self.brightness_pin, self.green_pin, self.yellow_pin, self.red_pin]
-            for pin in pins:
+            for pin in [self.brightness_pin, self.green_pin, self.yellow_pin, self.red_pin]:
                 GPIO.setup(pin, GPIO.OUT)
                 GPIO.output(pin, GPIO.LOW)
 
@@ -93,68 +93,122 @@ class LEDController:
             self.brightness_enabled = False
 
     def _init_led_states(self):
-        """Initialize LED states"""
-        self.set_status('off')  # All LEDs off initially
+        """Initialize LED states: system on -> green blink"""
+        try:
+            # All off initially
+            self._set_green(False)
+            self._set_yellow(False)
+            self._set_red(False)
+        except Exception:
+            pass
         if self.brightness_enabled:
             GPIO.output(self.brightness_pin, GPIO.LOW)
+        # System on indication
+        self._start_green_blink()
 
     def set_status(self, status: str):
         """Set status LEDs based on system status"""
-        # Turn off all status LEDs first
+        # Stop blinks by default
+        self._stop_yellow_blink()
+        # Clear solid states
         self._set_green(False)
         self._set_yellow(False)
         self._set_red(False)
 
         if status == 'ready':
-            # System working
-            self._set_green(True)
+            # System running -> green blink
+            self._start_green_blink()
         elif status == 'verifying':
-            # Person detected / verification in progress
-            self._set_red(True)
+            # Person detection -> yellow blink
+            # self._stop_green_blink()
+            self._start_yellow_blink()
         elif status == 'guest':
-            # Guest mode
+            # Guest mode -> yellow solid HIGH
+            # self._stop_green_blink()
             self._set_yellow(True)
         elif status == 'alert':
-            # Alert state
+            # Unknown person detected -> red solid HIGH
+            # self._stop_green_blink()
             self._set_red(True)
-        elif status == 'recording':
-            # Flash red LED for recording
-            self._flash_red()
         elif status == 'off':
-            pass  # All off
+            # System off -> all LEDs off
+            self._stop_green_blink()
+            self._stop_yellow_blink()
+            self._set_green(False)
+            self._set_yellow(False)
+            self._set_red(False)
+        elif status == 'recording':
+            # Recording unknown person -> red solid HIGH
+            # self._stop_green_blink()
+            self._set_red(True)
 
     def _set_green(self, state: bool):
-        """Control green LED"""
         try:
             GPIO.output(self.green_pin, GPIO.HIGH if state else GPIO.LOW)
         except Exception as e:
             logger.error(f"Error controlling green LED: {e}")
 
     def _set_yellow(self, state: bool):
-        """Control yellow LED"""
         try:
             GPIO.output(self.yellow_pin, GPIO.HIGH if state else GPIO.LOW)
         except Exception as e:
             logger.error(f"Error controlling yellow LED: {e}")
 
     def _set_red(self, state: bool):
-        """Control red LED"""
         try:
             GPIO.output(self.red_pin, GPIO.HIGH if state else GPIO.LOW)
         except Exception as e:
             logger.error(f"Error controlling red LED: {e}")
 
-    def _flash_red(self):
-        """Flash red LED for recording indication"""
-        def flash():
-            for _ in range(3):  # Flash 3 times
-                self._set_red(True)
+    def _start_green_blink(self):
+        if self._green_blink:
+            return
+        self._green_blink = True
+        def _blink():
+            while self._green_blink:
+                self._set_green(True)
                 time.sleep(0.5)
-                self._set_red(False)
+                self._set_green(False)
                 time.sleep(0.5)
+        self._green_thread = threading.Thread(target=_blink, daemon=True)
+        self._green_thread.start()
 
-        thread = threading.Thread(target=flash, daemon=True)
-        thread.start()
+    def _stop_green_blink(self):
+        if not self._green_blink:
+            return
+        self._green_blink = False
+        try:
+            if self._green_thread:
+                self._green_thread.join(timeout=0.1)
+        except Exception:
+            pass
+        self._green_thread = None
+
+    def _start_yellow_blink(self):
+        if self._yellow_blink:
+            return
+        self._yellow_blink = True
+        def _blink():
+            while self._yellow_blink:
+                self._set_yellow(True)
+                time.sleep(0.3)
+                self._set_yellow(False)
+                time.sleep(0.3)
+        self._yellow_thread = threading.Thread(target=_blink, daemon=True)
+        self._yellow_thread.start()
+
+    def _stop_yellow_blink(self):
+        if not self._yellow_blink:
+            return
+        self._yellow_blink = False
+        try:
+            if self._yellow_thread:
+                self._yellow_thread.join(timeout=0.1)
+        except Exception:
+            pass
+        self._yellow_thread = None
+
+    # Recording flash removed; use red solid during alerts/recording
 
     def turn_on_brightness(self, duration: Optional[float] = None):
         """Turn on high brightness LED"""
@@ -195,42 +249,50 @@ class LEDController:
             logger.error(f"Error controlling brightness LED: {e}")
 
     def start_guest_mode_pulse(self):
-        """Guest mode indicator: set steady yellow HIGH"""
-        if self.guest_mode_active:
-            return  # Already active
-        self.guest_mode_active = True
-        logger.info("💛 Guest mode active - yellow LED ON")
-        try:
-            self._set_yellow(True)
-        except Exception as e:
-            logger.error(f"Error setting guest mode LED: {e}")
+        """Guest mode -> yellow solid ON"""
+        self._stop_yellow_blink()
+        self._stop_green_blink()
+        self._set_red(False)
+        self._set_yellow(True)
 
     def stop_guest_mode_pulse(self):
-        """Stop guest mode indicator and turn yellow OFF"""
-        if not self.guest_mode_active:
-            return
-
-        self.guest_mode_active = False
-        logger.info("💛 Guest mode ended - yellow LED OFF")
-
-        if self.guest_mode_timer:
-            try:
-                self.guest_mode_timer.join(timeout=2.0)
-            except Exception:
-                pass
-            self.guest_mode_timer = None
-
-        # Turn off yellow LED
+        """Exit guest mode -> yellow LOW, back to ready (green blink)"""
         self._set_yellow(False)
+        self._start_green_blink()
+
+    def person_detected(self):
+        """Handle person detection -> yellow blink"""
+        self._stop_green_blink()
+        self._start_yellow_blink()
+        logger.info("🟡 Person detected - yellow LED blinking")
+
+    def unknown_person_detected(self):
+        """Handle unknown person detection -> red solid"""
+        self._stop_green_blink()
+        self._stop_yellow_blink()
+        self._set_red(True)
+        logger.info("🔴 Unknown person detected - red LED solid")
+
+    def known_person_detected(self):
+        """Handle known person detection -> back to ready (green blink)"""
+        self._stop_yellow_blink()
+        self._set_red(False)
+        self._start_green_blink()
+        logger.info("🟢 Known person detected - back to green blink")
 
     def cleanup(self):
         """Cleanup GPIO resources"""
         try:
-            # Stop guest mode pulse
-            self.stop_guest_mode_pulse()
-
-            # Turn off all LEDs
-            self.set_status('off')
+            # Stop blinks and turn off LEDs
+            self._stop_green_blink()
+            self._stop_yellow_blink()
+            try:
+                self._set_green(False)
+                self._set_yellow(False)
+                self._set_red(False)
+            except Exception:
+                pass
+            # Turn off brightness
             self.turn_off_brightness()
 
             logger.info("🧹 LED controller cleaned up")
@@ -358,10 +420,9 @@ class HardwareManager:
         # Suppress repeated motion actions while lights are already on for the motion window
         if current_time < getattr(self, '_motion_suppress_until', 0.0):
             return
-
+        # Indicate person detection (yellow blink)
         if self.led_controller:
             self.led_controller.set_status('verifying')
-
         # Drive MOSFET LED ON for motion window
         if self.led_controller:
             self.led_controller.turn_on_brightness(HARDWARE['motion_light_duration_s'])
@@ -370,7 +431,7 @@ class HardwareManager:
         self._motion_suppress_until = current_time + HARDWARE['motion_light_duration_s']
 
     def set_system_status(self, status: str):
-        """Set overall system status"""
+        """Set overall system status LEDs"""
         if self.led_controller:
             self.led_controller.set_status(status)
 
@@ -411,14 +472,29 @@ class HardwareManager:
         return False
 
     def activate_guest_mode(self, host_name: str):
-        """Activate guest mode with yellow pulsing LED"""
+        """Activate guest mode -> yellow solid ON"""
         if self.led_controller:
             self.led_controller.start_guest_mode_pulse()
 
     def revert_guest_mode(self):
-        """Revert from guest mode back to normal security"""
+        """Revert guest mode -> back to ready (green blink)"""
         if self.led_controller:
             self.led_controller.stop_guest_mode_pulse()
+
+    def person_detected(self):
+        """Handle person detection -> yellow blink"""
+        if self.led_controller:
+            self.led_controller.person_detected()
+
+    def unknown_person_detected(self):
+        """Handle unknown person detection -> red solid"""
+        if self.led_controller:
+            self.led_controller.unknown_person_detected()
+
+    def known_person_detected(self):
+        """Handle known person detection -> back to ready (green blink)"""
+        if self.led_controller:
+            self.led_controller.known_person_detected()
 
     
 

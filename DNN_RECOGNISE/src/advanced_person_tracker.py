@@ -693,6 +693,14 @@ class ByteTracker:
                 
                 self.tracks[self.next_id] = new_track
                 self.next_id += 1
+                
+                # Trigger person detection LED (yellow blink)
+                if self.parent_tracker and self.parent_tracker.hardware_manager:
+                    try:
+                        self.parent_tracker.hardware_manager.person_detected()
+                        logger.info(f"🟡 Person detection LED triggered for new track {self.next_id-1}")
+                    except Exception as e:
+                        logger.warning(f"Failed to trigger person detection LED: {e}")
         
         # Remove tracks that haven't been matched for too long
         tracks_to_remove = []
@@ -1218,11 +1226,11 @@ class AdvancedPersonTracker:
                 except Exception as e:
                     logger.warning(f"Failed to turn off lights after known person: {e}")
 
-            # Set status to ready (green LED steady)
+            # Set status to ready (green LED blink) for known person
             if self.hardware_manager:
                 try:
-                    self.hardware_manager.set_system_status('ready')
-                    logger.debug(f"🟢 Hardware status set to 'ready' for known person {track.track_id}")
+                    self.hardware_manager.known_person_detected()
+                    logger.debug(f"🟢 Known person detected - LED status updated for track {track.track_id}")
                 except Exception as e:
                     logger.warning(f"Hardware status not available: {e}")
 
@@ -1621,7 +1629,8 @@ class AdvancedPersonTracker:
             
             if self.hardware_manager:
                 logger.info(f"🔴 Setting hardware status to 'alert' for unknown person {track.track_id}")
-                self.hardware_manager.set_system_status('alert')
+                # Set red LED for unknown person
+                self.hardware_manager.unknown_person_detected()
                 try:
                     logger.info(f"🔊 Attempting to play hardware alarm for unknown person {track.track_id}")
                     self.hardware_manager.play_alarm()
@@ -1677,6 +1686,8 @@ class AdvancedPersonTracker:
                 try:
                     logger.info(f"🔊 Playing hardware alarm for verified unknown person {track.track_id}")
                     self.hardware_manager.play_alarm()
+                    # Set red LED for unknown person
+                    self.hardware_manager.unknown_person_detected()
                 except Exception as e:
                     logger.warning(f"Hardware alarm failed: {e}")
             
@@ -1885,6 +1896,8 @@ class AdvancedPersonTracker:
             if self.hardware_manager:
                 try:
                     self.hardware_manager.activate_guest_mode(track.identity)
+                    # Set yellow LED solid for guest mode
+                    self.hardware_manager.set_system_status('guest')
                 except Exception as e:
                     logger.warning(f"Hardware guest mode not available: {e}")
                     

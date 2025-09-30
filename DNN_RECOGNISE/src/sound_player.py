@@ -19,9 +19,9 @@ try:
 except ImportError:
     # Fallback settings if import fails
     AUDIO = {
-        'wav_files_dir': 'sounds/wav',
-        'alarm_sound_path': 'sounds/alarm.mp3',
-        'verification_beep_path': 'sounds/verification_beep.mp3',
+        'wav_files_dir': '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav',
+        'alarm_sound_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/alarm.mp3',
+        'verification_beep_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3',
         'use_mp3_sounds': True,
         'mp3_player_linux': 'mpg123',
         'mp3_player_windows': 'powershell',
@@ -42,9 +42,9 @@ class SoundPlayer:
     def __init__(self):
         """Initialize sound player"""
         self.is_enabled = AUDIO.get('use_mp3_sounds', True)
-        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
-        self.alarm_sound_path = AUDIO.get('alarm_sound_path', 'sounds/alarm.mp3')
-        self.verification_beep_path = AUDIO.get('verification_beep_path', 'sounds/verification_beep.mp3')
+        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav')
+        self.alarm_sound_path = AUDIO.get('alarm_sound_path', '/home/jecon/yolo/DNN_RECOGNISE/sounds/alarm.mp3')
+        self.verification_beep_path = AUDIO.get('verification_beep_path', '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3')
         self.alarm_duration_minutes = AUDIO.get('alarm_duration_minutes', 2)
         self.alarm_loop_interval = AUDIO.get('alarm_loop_interval', 5)
         

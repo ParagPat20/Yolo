@@ -184,13 +184,9 @@ class CCTVSystem:
 
         logger.info("🚶 Motion detected - activating enhanced monitoring")
 
-        # Turn on brightness LED
+        # Turn on brightness LED only
         if self.hardware_manager:
             self.hardware_manager.led_controller.turn_on_brightness(CCTV['led_brightness_duration'])
-
-        # Set status to alert
-        if self.hardware_manager:
-            self.hardware_manager.set_system_status('alert')
 
     def run(self):
         """Main CCTV system loop"""
@@ -201,7 +197,7 @@ class CCTVSystem:
         self.running = True
         logger.info("🎯 CCTV System started - monitoring for persons and faces")
 
-        # Set initial status (system working -> green ON)
+        # Set initial status (system on -> green blink)
         if self.hardware_manager:
             self.hardware_manager.set_system_status('ready')
 
@@ -221,6 +217,9 @@ class CCTVSystem:
 
                 # Update guest mode status
                 self.update_guest_mode_status(tracks)
+                
+                # Update LED states based on person detection
+                self.update_led_states(tracks)
 
                 # Update FPS counter
                 self.frame_count += 1
@@ -290,7 +289,7 @@ class CCTVSystem:
             self.person_tracker.tracker.tracks.clear()
             self.person_tracker.tracker.next_id = 1
 
-        # Reset hardware status
+        # Reset to ready state
         if self.hardware_manager:
             self.hardware_manager.set_system_status('ready')
 
@@ -311,12 +310,35 @@ class CCTVSystem:
             self.guest_mode_active = current_guest_mode
             if self.hardware_manager:
                 if current_guest_mode:
-                    # Guest mode activated - hardware manager already handles this
-                    pass
+                    # Guest mode activated - set yellow LED solid
+                    self.hardware_manager.set_system_status('guest')
                 else:
-                    # Guest mode deactivated - revert to ready status
+                    # Guest mode deactivated - revert to ready (green blink)
                     self.hardware_manager.set_system_status('ready')
             logger.info(f"👥 Guest mode {'activated' if current_guest_mode else 'deactivated'}")
+
+    def update_led_states(self, tracks: List):
+        """Update LED states based on person detection and verification status"""
+        if not self.hardware_manager:
+            return
+        
+        # Check for unknown persons (red LED)
+        unknown_persons = [track for track in tracks if not track.is_known and not track.is_guest and track.alert_sent]
+        if unknown_persons:
+            # Unknown person detected - red LED solid
+            self.hardware_manager.unknown_person_detected()
+            return
+        
+        # Check for person detection (yellow blink)
+        active_persons = [track for track in tracks if not track.is_guest]
+        if active_persons:
+            # Person detected - yellow LED blink
+            self.hardware_manager.person_detected()
+            return
+        
+        # No persons detected - back to ready (green blink)
+        if not active_persons:
+            self.hardware_manager.set_system_status('ready')
 
     def play_background_sound(self, sound_type: str, **kwargs):
         """Play sound in background thread to avoid blocking main CCTV process"""
