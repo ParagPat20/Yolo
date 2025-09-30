@@ -32,7 +32,7 @@ class WAVFileUpdater:
     def __init__(self):
         """Initialize WAV file updater"""
         self.language = SOUND_SYSTEM.get('language', 'en')
-        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
+        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav')
         self.piper_config = SOUND_SYSTEM.get('piper', {})
         
         # Create WAV files directory

@@ -13,6 +13,7 @@ import time
 import threading
 from datetime import datetime
 from typing import Optional, Tuple, List
+import os
 # Unused imports removed
 
 from settings.settings import (
@@ -56,6 +57,15 @@ class CCTVSystem:
 
     def __init__(self):
         logger.info("🚀 Initializing Raspberry Pi CCTV System...")
+
+        # Set absolute base directory for all relative paths
+        try:
+            self.BASE_DIR = '/home/jecon/yolo/DNN_RECOGNISE'
+            os.makedirs(self.BASE_DIR, exist_ok=True)
+            os.chdir(self.BASE_DIR)
+            logger.info(f"📂 Working directory set to {self.BASE_DIR}")
+        except Exception as e:
+            logger.error(f"Failed to set working directory: {e}")
 
         # Initialize hardware
         self.hardware_manager = get_hardware_manager() if HARDWARE_AVAILABLE else None
@@ -275,8 +285,10 @@ class CCTVSystem:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"cctv_snapshot_{timestamp}.jpg"
-            cv2.imwrite(filename, frame)
-            logger.info(f"📸 Snapshot saved: {filename}")
+            # Save to absolute path under BASE_DIR
+            filepath = os.path.join(getattr(self, 'BASE_DIR', '.'), filename)
+            cv2.imwrite(filepath, frame)
+            logger.info(f"📸 Snapshot saved: {filepath}")
         except Exception as e:
             logger.error(f"Failed to save snapshot: {e}")
 

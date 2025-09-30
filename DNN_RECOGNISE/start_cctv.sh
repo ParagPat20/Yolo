@@ -34,6 +34,20 @@ detect_xauthority() {
 
 XAUTHORITY_PATH="$(detect_xauthority)"
 
+# Ensure audio runtime env for systemd context
+ensure_audio_env() {
+  # Set XDG_RUNTIME_DIR for the user (1000 typical for first user)
+  if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    export XDG_RUNTIME_DIR="/run/user/1000"
+  fi
+  # If Pulse server socket exists, export PULSE_SERVER
+  if [[ -S "$XDG_RUNTIME_DIR/pulse/native" ]]; then
+    export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
+  fi
+  # Ensure PATH contains common locations for mpg123/aplay
+  export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+}
+
 # Check if GUI display is ready by probing xset
 is_gui_ready() {
   if command -v xset >/dev/null 2>&1; then
@@ -69,13 +83,14 @@ fi
 
 export DISPLAY="$ACTIVE_DISPLAY"
 [[ -n "$XAUTHORITY_PATH" ]] && export XAUTHORITY="$XAUTHORITY_PATH"
+ensure_audio_env
 
 cd "$PROJECT_DIR"
 echo "[start_cctv] Starting CCTV in tmux session 'cctv'..."
 if command -v tmux >/dev/null 2>&1; then
   # Create or reuse session
   tmux has-session -t cctv >/dev/null 2>&1 || tmux new-session -d -s cctv
-  tmux send-keys -t cctv "cd '$PROJECT_DIR' && DISPLAY='$ACTIVE_DISPLAY' ${XAUTHORITY:+XAUTHORITY='$XAUTHORITY_PATH'} python3 -u '$SCRIPT'" C-m
+  tmux send-keys -t cctv "cd '$PROJECT_DIR' && DISPLAY='$ACTIVE_DISPLAY' ${XAUTHORITY:+XAUTHORITY='$XAUTHORITY_PATH'} XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-/run/user/1000}' ${PULSE_SERVER:+PULSE_SERVER='$PULSE_SERVER'} PATH='$PATH' python3 -u '$SCRIPT'" C-m
   echo "[start_cctv] Launched in tmux. Attach with: tmux attach -t cctv"
   # Keep this process alive while the tmux session exists so systemd doesn't
   # tear down the cgroup and kill tmux. When session ends, exit.
@@ -86,7 +101,7 @@ if command -v tmux >/dev/null 2>&1; then
   exit 0
 else
   echo "[start_cctv] tmux not found; running in foreground."
-  exec python3 -u "$SCRIPT"
+  exec env DISPLAY="$ACTIVE_DISPLAY" ${XAUTHORITY:+XAUTHORITY="$XAUTHORITY_PATH"} XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}" ${PULSE_SERVER:+PULSE_SERVER="$PULSE_SERVER"} PATH="$PATH" python3 -u "$SCRIPT"
 fi
 
 

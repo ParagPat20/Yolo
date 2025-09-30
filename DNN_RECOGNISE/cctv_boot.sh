@@ -20,6 +20,8 @@ Group=jecon
 Environment=PYTHONUNBUFFERED=1
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/jecon/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WorkingDirectory=/home/jecon/yolo/DNN_RECOGNISE
 ExecStart=/home/jecon/yolo/DNN_RECOGNISE/start_cctv.sh
 Restart=always

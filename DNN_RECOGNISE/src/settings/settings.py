@@ -186,8 +186,8 @@ AUDIO = {
     'guest_mode_message': "Guest Mode Activated",
     'guest_mode_reverted': 'Guest mode EXPIRED',
     'unknown_timeout': 'Unknown person timeout. Please verify face',
-    'alarm_sound_path': 'sounds/alarm.mp3',
-    'verification_beep_path': 'sounds/verification_beep.mp3',
+    'alarm_sound_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/alarm.mp3',
+    'verification_beep_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3',
     'use_mp3_sounds': True,  # Enable MP3 sound playback
     'mp3_player_linux': 'mpg123',  # MP3 player for Linux
     'mp3_player_windows': 'powershell',  # Fallback for Windows
@@ -199,7 +199,7 @@ AUDIO = {
 SOUND_SYSTEM = {
     'enabled': True,  # Enable/disable sound system
     'language': 'en',  # Default language: 'en' for English, 'gu' for Gujarati
-    'wav_files_dir': 'sounds/wav',  # Directory for generated WAV files
+    'wav_files_dir': '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav',  # Directory for generated WAV files
     'piper': {
         'model_path': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',  # Default model path
         'models': {

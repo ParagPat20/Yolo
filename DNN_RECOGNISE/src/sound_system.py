@@ -23,7 +23,7 @@ except ImportError:
     SOUND_SYSTEM = {
         'enabled': True,
         'language': 'en',
-        'wav_files_dir': 'sounds/wav',
+        'wav_files_dir': '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav',
         'piper': {
             'model_path': '/usr/local/share/piper-voices/en_US-ljspeech-medium.onnx',
             'models': {
@@ -35,9 +35,9 @@ except ImportError:
         }
     }
     AUDIO = {
-        'wav_files_dir': 'sounds/wav',
-        'alarm_sound_path': 'sounds/alarm.mp3',
-        'verification_beep_path': 'sounds/verification_beep.mp3',
+        'wav_files_dir': '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav',
+        'alarm_sound_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/alarm.mp3',
+        'verification_beep_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3',
     }
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class SoundSystem:
         """Initialize sound system and generate WAV files"""
         self.is_enabled = False
         self.language = language or SOUND_SYSTEM.get('language', 'en')
-        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', 'sounds/wav')
+        self.wav_files_dir = SOUND_SYSTEM.get('wav_files_dir', '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav')
         self.alarm_active = False
         self.current_process: Optional[subprocess.Popen] = None
         
