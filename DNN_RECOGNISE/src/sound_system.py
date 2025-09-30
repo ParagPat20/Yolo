@@ -337,7 +337,16 @@ class SoundSystem:
             if filename.endswith('.wav'):
                 cmd = ['aplay', filepath]
             else:
-                cmd = ['mpg123', '-q', filepath]  # -q for quiet mode
+                # Build mpg123 command honoring configured output and extra args
+                from settings.settings import AUDIO as AUDIO_SETTINGS
+                mpg123_output = AUDIO_SETTINGS.get('mpg123_output', 'alsa')
+                mpg123_extra_args = AUDIO_SETTINGS.get('mpg123_extra_args', [])
+                cmd = ['mpg123', '-q']
+                if mpg123_output:
+                    cmd += ['-o', mpg123_output]
+                if isinstance(mpg123_extra_args, list) and mpg123_extra_args:
+                    cmd += mpg123_extra_args
+                cmd.append(filepath)
             
             # Start audio playback
             self.current_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -355,8 +364,16 @@ class SoundSystem:
             # Stop any current audio
             self.stop_audio()
             
-            # Use mpg123 for MP3 files
-            cmd = ['mpg123', '-q', filepath]
+            # Use mpg123 for MP3 files with configured output backend
+            from settings.settings import AUDIO as AUDIO_SETTINGS
+            mpg123_output = AUDIO_SETTINGS.get('mpg123_output', 'alsa')
+            mpg123_extra_args = AUDIO_SETTINGS.get('mpg123_extra_args', [])
+            cmd = ['mpg123', '-q']
+            if mpg123_output:
+                cmd += ['-o', mpg123_output]
+            if isinstance(mpg123_extra_args, list) and mpg123_extra_args:
+                cmd += mpg123_extra_args
+            cmd.append(filepath)
             self.current_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.debug(f"🔊 Playing MP3: {os.path.basename(filepath)}")
             

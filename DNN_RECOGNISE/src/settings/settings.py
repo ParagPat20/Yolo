@@ -190,6 +190,11 @@ AUDIO = {
     'verification_beep_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3',
     'use_mp3_sounds': True,  # Enable MP3 sound playback
     'mp3_player_linux': 'mpg123',  # MP3 player for Linux
+    # Force mpg123 output backend to avoid PulseAudio issues when not in desktop session
+    # Common values: 'alsa', 'pulse', 'jack', 'oss'. Leave empty to let mpg123 auto-detect
+    'mpg123_output': 'alsa',
+    # Extra args for mpg123, e.g. ['-a', 'hw:0,0'] to select ALSA device. Leave [] for default
+    'mpg123_extra_args': [],
     'mp3_player_windows': 'powershell',  # Fallback for Windows
     'alarm_duration_minutes': 2,  # Duration to play alarm sound (in minutes) - FIXED at 2 minutes
     'alarm_loop_interval': 5  # Seconds between alarm sound loops

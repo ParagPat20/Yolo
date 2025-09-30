@@ -31,7 +31,7 @@ except ImportError:
     SOUND_SYSTEM = {
         'enabled': True,
         'language': 'en',
-        'wav_files_dir': 'sounds/wav'
+        'wav_files_dir': '/home/jecon/yolo/DNN_RECOGNISE/sounds/wav'
     }
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,12 @@ class SoundPlayer:
         # Determine audio player based on platform
         if platform.system() == 'Windows':
             self.mp3_player = AUDIO.get('mp3_player_windows', 'powershell')
+            self.mpg123_output = None
+            self.mpg123_extra_args = []
         else:
             self.mp3_player = AUDIO.get('mp3_player_linux', 'mpg123')
+            self.mpg123_output = AUDIO.get('mpg123_output', 'alsa')
+            self.mpg123_extra_args = AUDIO.get('mpg123_extra_args', [])
         
         if self.is_enabled:
             logger.info("🔊 Sound player initialized")
@@ -116,8 +120,13 @@ class SoundPlayer:
                 # Use PowerShell for Windows
                 cmd = ['powershell', '-c', f'(New-Object Media.SoundPlayer "{filepath}").PlaySync()']
             else:
-                # Use mpg123 for Linux/Mac
-                cmd = ['mpg123', '-q', filepath]
+                # Use mpg123 for Linux/Mac with configured output backend
+                cmd = ['mpg123', '-q']
+                if self.mpg123_output:
+                    cmd += ['-o', self.mpg123_output]
+                if isinstance(self.mpg123_extra_args, list) and self.mpg123_extra_args:
+                    cmd += self.mpg123_extra_args
+                cmd.append(filepath)
             
             self.current_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.debug(f"🔊 Playing MP3: {os.path.basename(filepath)}")
