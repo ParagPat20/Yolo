@@ -143,7 +143,7 @@ HARDWARE = {
     'speaker_power_hold_ms': 2000,   # Hold LOW 2 seconds to power speaker ON
 
     # Motion lighting behavior
-    'motion_light_duration_s': 30,   # High brightness hold on motion
+    'motion_light_duration_s': 15,   # High brightness hold on motion
 
     # Lights click timing
     'lights_click_gap_s': 1.0,       # Required gap between single clicks

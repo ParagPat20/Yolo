@@ -216,7 +216,7 @@ class LEDController:
             return
 
         try:
-            GPIO.output(self.brightness_pin, GPIO.HIGH)
+            GPIO.output(self.brightness_pin, GPIO.LOW)
             logger.info("💡 High brightness LED turned on")
             self.brightness_on = True
 
@@ -237,7 +237,7 @@ class LEDController:
             return
 
         try:
-            GPIO.output(self.brightness_pin, GPIO.LOW)
+            GPIO.output(self.brightness_pin, GPIO.HIGH)
             logger.info("💡 High brightness LED turned off")
             self.brightness_on = False
 
