@@ -117,13 +117,14 @@ class PersonTrack:
 
     # Audio cooldowns
     last_verification_audio_time: float = 0.0  # Cooldown for initial verification request sound
-    
-    # Enhanced security tracking
-    person_detection_start_time: float = 0.0  # When person was first detected
-    person_detection_confirmed: bool = False  # Whether person has been detected for threshold time
-    verification_request_sent: bool = False  # Whether verification request has been sent
-    security_alarm_triggered: bool = False  # Whether security alarm has been triggered
-    persistent_alarm_active: bool = False  # Whether persistent alarm is active
+
+    # Presence gating (request verification only after 2s continuous presence)
+    first_seen_time: float = 0.0  # When this track was first created
+    presence_confirmed: bool = False  # True after being present for 2s
+    presence_confirmed_time: float = 0.0  # Timestamp when presence was confirmed
+
+    # Deferred incident for post-departure alarm
+    incident_id: Optional[str] = None  # Link to global pending incident
 
 class YOLOv8PersonDetector:
     """YOLOv8-based person detection"""
@@ -673,6 +674,9 @@ class ByteTracker:
                     frames_since_recognition=0
                 )
 
+                # Initialize first seen timestamp for presence gating
+                new_track.first_seen_time = current_time
+
                 # Initialize trajectory history for guest detection
                 new_track.trajectory_history = deque(maxlen=10)  # Store last 10 trajectory points
 
@@ -776,10 +780,9 @@ class AdvancedPersonTracker:
         # Global silence window after verification (no sounds)
         self.silence_until = 0.0
 
-        # Enhanced security system
-        self.security_alarms = {}  # Track active security alarms {alarm_id: alarm_info}
-        self.next_alarm_id = 1
-        self.persistent_alarm_timeout = SECURITY.get('alarm_duration_minutes', 2) * 60  # Convert to seconds
+        # Pending incidents registry: alarm even if subject leaves
+        # Structure: {incident_id: {start_time, deadline, resolved, triggered, host_name?, last_seen_time}}
+        self.pending_incidents = {}
 
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
@@ -819,6 +822,15 @@ class AdvancedPersonTracker:
         # Process each tracked person
         for track in person_tracks:
             logger.debug(f"👤 Processing track {track.track_id}: center=({track.center[0]:.1f}, {track.center[1]:.1f}), confidence={track.confidence:.2f}")
+            # Presence gating: confirm presence after 2 seconds from first_seen_time
+            try:
+                if not track.presence_confirmed and track.first_seen_time > 0:
+                    if time.time() - track.first_seen_time >= CCTV.get('presence_gate_seconds', 2.0):
+                        track.presence_confirmed = True
+                        track.presence_confirmed_time = time.time()
+                        logger.info(f"✅ Presence confirmed for track {track.track_id} (2s) - will request verification if needed")
+            except Exception:
+                pass
             self._process_person_track(frame, track)
 
         # Check for guest mode activation
@@ -827,6 +839,9 @@ class AdvancedPersonTracker:
 
         # Handle active recordings
         self._update_recordings(frame, person_tracks)
+
+        # Process pending incidents (deferred alarms) irrespective of current tracks
+        self._process_pending_incidents()
 
         # Clean up old trusted memory entries
         self._cleanup_trusted_memory()
@@ -840,9 +855,6 @@ class AdvancedPersonTracker:
         
         # Clean up ghost tracks (tracks that are no longer valid)
         self._cleanup_ghost_tracks(person_tracks)
-
-        # Enhanced security system - check for persistent alarms and person detection
-        self._check_enhanced_security(person_tracks)
 
         # Draw annotations
         annotated_frame = self._draw_annotations(frame, person_tracks)
@@ -1069,158 +1081,6 @@ class AdvancedPersonTracker:
                 del self.tracker.tracks[track_id]
                 logger.info(f"🗑️ Removed ghost track {track_id} from tracker")
 
-    def _check_enhanced_security(self, tracks: List[PersonTrack]):
-        """Enhanced security system with 2-second detection threshold and 20-second verification timeout"""
-        current_time = time.time()
-        detection_threshold = SECURITY.get('person_detection_threshold', 2.0)
-        verification_timeout = SECURITY.get('verification_request_timeout', 20.0)
-        
-        # Check each track for enhanced security
-        for track in tracks:
-            # Skip guests and trusted persons
-            if track.is_guest or (track.is_trusted and track.is_known):
-                continue
-                
-            # Initialize detection start time if not set
-            if track.person_detection_start_time == 0.0:
-                track.person_detection_start_time = current_time
-                logger.info(f"🕐 Person {track.track_id} detection started at {current_time:.1f}")
-            
-            # Check if person has been detected for threshold time
-            detection_duration = current_time - track.person_detection_start_time
-            
-            if not track.person_detection_confirmed and detection_duration >= detection_threshold:
-                track.person_detection_confirmed = True
-                logger.info(f"✅ Person {track.track_id} confirmed present for {detection_duration:.1f}s - requesting verification")
-                print(f"🔍 Person detected for {detection_duration:.1f}s - Please show your face for verification")
-                
-                # Request face verification
-                self._request_face_verification(track, current_time)
-                
-            # Check if verification request has been sent and timeout reached
-            elif (track.person_detection_confirmed and track.verification_request_sent and 
-                  not track.security_alarm_triggered):
-                
-                verification_elapsed = current_time - track.verification_start_time
-                
-                if verification_elapsed >= verification_timeout:
-                    # Trigger security alarm
-                    self._trigger_security_alarm(track, current_time)
-                else:
-                    # Show countdown
-                    remaining = verification_timeout - verification_elapsed
-                    if int(remaining) != getattr(track, '_last_countdown_second', -1):
-                        track._last_countdown_second = int(remaining)
-                        if remaining > 0:
-                            print(f"⏰ {int(remaining)} seconds remaining for face verification...")
-        
-        # Check for expired persistent alarms
-        self._check_persistent_alarms(current_time)
-
-    def _request_face_verification(self, track: PersonTrack, current_time: float):
-        """Request face verification from person"""
-        track.verification_request_sent = True
-        track.verification_start_time = current_time
-        track.verification_requested = True
-        track.needs_face_check = True
-        
-        logger.info(f"🔍 Requesting face verification from person {track.track_id}")
-        
-        # Play verification request audio
-        if self.sound_player and not self.sound_player.is_alarm_playing():
-            try:
-                self.sound_player.play_verification_request()
-            except Exception as e:
-                logger.warning(f"Failed to play verification request: {e}")
-        
-        # Update hardware status
-        if self.hardware_manager:
-            try:
-                self.hardware_manager.set_system_status('verifying')
-            except Exception as e:
-                logger.warning(f"Hardware status not available: {e}")
-
-    def _trigger_security_alarm(self, track: PersonTrack, current_time: float):
-        """Trigger security alarm for unverified person"""
-        track.security_alarm_triggered = True
-        track.persistent_alarm_active = True
-        
-        # Create persistent alarm entry
-        alarm_id = self.next_alarm_id
-        self.next_alarm_id += 1
-        
-        self.security_alarms[alarm_id] = {
-            'track_id': track.track_id,
-            'start_time': current_time,
-            'end_time': current_time + self.persistent_alarm_timeout,
-            'active': True
-        }
-        
-        logger.warning(f"🚨 SECURITY ALARM TRIGGERED for person {track.track_id}")
-        print(f"🚨 SECURITY BREACH! Person at location ({track.center[0]:.0f}, {track.center[1]:.0f}) failed to verify within {SECURITY.get('verification_request_timeout', 20.0)}s")
-        print(f"🚨 ALARM ID: {alarm_id} - Will run for {self.persistent_alarm_timeout/60:.1f} minutes")
-        
-        # Start alarm sound
-        if self.sound_player:
-            try:
-                self.sound_player.play_alarm()
-                logger.info(f"🚨 Alarm sound started for security breach {alarm_id}")
-            except Exception as e:
-                logger.warning(f"Failed to start alarm sound: {e}")
-        
-        # Update hardware status
-        if self.hardware_manager:
-            try:
-                self.hardware_manager.unknown_person_detected()
-                self.hardware_manager.play_alarm()
-            except Exception as e:
-                logger.warning(f"Hardware alarm not available: {e}")
-
-    def _check_persistent_alarms(self, current_time: float):
-        """Check for expired persistent alarms"""
-        expired_alarms = []
-        
-        for alarm_id, alarm_info in self.security_alarms.items():
-            if alarm_info['active'] and current_time >= alarm_info['end_time']:
-                # Alarm has expired
-                alarm_info['active'] = False
-                expired_alarms.append(alarm_id)
-                
-                logger.info(f"🔇 Persistent alarm {alarm_id} expired after {self.persistent_alarm_timeout/60:.1f} minutes")
-                print(f"🔇 Security alarm {alarm_id} completed - 2 minutes elapsed")
-                
-                # Stop alarm sound
-                if self.sound_player and self.sound_player.is_alarm_playing():
-                    self.sound_player.stop_alarm()
-                
-                # Update hardware status
-                if self.hardware_manager:
-                    try:
-                        self.hardware_manager.stop_alarm()
-                        self.hardware_manager.lights_off()
-                    except Exception as e:
-                        logger.warning(f"Hardware alarm stop not available: {e}")
-        
-        # Remove expired alarms
-        for alarm_id in expired_alarms:
-            del self.security_alarms[alarm_id]
-            logger.info(f"🗑️ Removed expired alarm {alarm_id}")
-
-    def _stop_security_alarms_for_person(self, track_id: int):
-        """Stop all security alarms for a specific person"""
-        alarms_to_remove = []
-        
-        for alarm_id, alarm_info in self.security_alarms.items():
-            if alarm_info['track_id'] == track_id and alarm_info['active']:
-                alarm_info['active'] = False
-                alarms_to_remove.append(alarm_id)
-                logger.info(f"🔇 Stopping security alarm {alarm_id} for verified person {track_id}")
-        
-        # Remove stopped alarms
-        for alarm_id in alarms_to_remove:
-            del self.security_alarms[alarm_id]
-            logger.info(f"🗑️ Removed security alarm {alarm_id} for person {track_id}")
-
     def _update_recordings(self, frame: np.ndarray, tracks: List[PersonTrack]):
         """Update active recordings for unknown persons"""
         current_time = time.time()
@@ -1385,9 +1245,6 @@ class AdvancedPersonTracker:
                     logger.info("🔇 Hardware alarm stopped")
                 except Exception as e:
                     logger.warning(f"Hardware alarm stop not available: {e}")
-            
-            # Stop any persistent security alarms for this person
-            self._stop_security_alarms_for_person(track.track_id)
 
             # Ensure any alert state LEDs revert to ready
             if self.hardware_manager and hasattr(self.hardware_manager, 'lights_off'):
@@ -1431,10 +1288,18 @@ class AdvancedPersonTracker:
             self.silence_until = current_time + 60.0
 
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
+            # Resolve any pending incident for this track (verified as known)
+            if track.incident_id:
+                self._resolve_incident(track.incident_id, reason="verified_known")
+                track.incident_id = None
 
         else:
             # Unknown person detected - handle based on current verification state
             if not track.verification_requested and not track.alert_sent:
+                # Only start verification after presence confirmed (2s)
+                if not track.presence_confirmed:
+                    logger.debug(f"⏳ Track {track.track_id} presence not confirmed yet; delaying verification request")
+                    return
                 # If within global guest window, treat as guest immediately
                 if current_time < getattr(self, 'global_guest_mode_until', 0.0):
                     track.is_guest = True
@@ -1463,6 +1328,9 @@ class AdvancedPersonTracker:
                         logger.warning(f"Hardware status not available: {e}")
 
                 self._play_verification_request(track)
+                # Register a pending incident to ensure alarm after 20s even if subject leaves
+                if not track.incident_id:
+                    track.incident_id = self._register_pending_incident(track)
                 return  # Verification window started
 
             elif track.verification_requested and not track.alert_sent:
@@ -1521,6 +1389,10 @@ class AdvancedPersonTracker:
                         self._handle_unknown_person_verified(track, face_roi, current_time, frame=getattr(self, '_last_frame', None))
                     except Exception as e:
                         logger.error(f"Error handling verified unknown: {e}")
+                    # Resolve pending incident since we already escalated
+                    if track.incident_id:
+                        self._resolve_incident(track.incident_id, reason="escalated_unknown")
+                        track.incident_id = None
                     return
                 else:
                     # Still in 10-second face adjustment window - continue verification attempts
@@ -1548,6 +1420,10 @@ class AdvancedPersonTracker:
                     track.verification_requested = False
                     track.verification_attempts = track.max_verification_attempts
                     self._handle_unknown_person_verified(track, face_roi, current_time)
+                    # Resolve pending incident since we already escalated
+                    if track.incident_id:
+                        self._resolve_incident(track.incident_id, reason="escalated_unknown")
+                        track.incident_id = None
                 else:
                     # Still attempting verification - request face verification again
                     remaining_attempts = track.max_verification_attempts - track.verification_attempts
@@ -1607,6 +1483,10 @@ class AdvancedPersonTracker:
             return
         
         if track.needs_face_check and not track.verification_requested and not track.alert_sent:
+            # Only start verification after presence confirmed (2s)
+            if not track.presence_confirmed:
+                logger.debug(f"⏳ Track {track.track_id} presence not confirmed yet; delaying verification request")
+                return
             # New person detected but no face visible - request verification
             track.verification_requested = True
             track.verification_start_time = current_time
@@ -1627,6 +1507,9 @@ class AdvancedPersonTracker:
 
             # Play initial verification request
             self._play_verification_request(track)
+            # Register a pending incident to ensure alarm after 20s even if subject leaves
+            if not track.incident_id:
+                track.incident_id = self._register_pending_incident(track)
 
         elif track.verification_requested:
             # Check if this is a ghost track - if so, stop verification
@@ -1670,6 +1553,10 @@ class AdvancedPersonTracker:
                 # Play unknown alert - ENHANCED ALARM TRIGGER
                 logger.warning(f"🚨 TRIGGERING ALARM for unknown person {track.track_id}")
                 self._trigger_unknown_person_alarm(track, current_time)
+                # Resolve pending incident since we already escalated
+                if track.incident_id:
+                    self._resolve_incident(track.incident_id, reason="escalated_unknown")
+                    track.incident_id = None
 
                 # Save full body photo since face is not available
                 try:
@@ -1889,6 +1776,63 @@ class AdvancedPersonTracker:
             track.identity = "Unknown"  # Set identity as unknown
             track.verification_requested = False  # Stop verification process
             logger.info(f"✅ Unknown person verification completed for track {track.track_id}")
+
+    def _register_pending_incident(self, track: PersonTrack) -> str:
+        """Register a pending incident to trigger alarm if not verified within unknown_timeout even if person leaves."""
+        try:
+            incident_id = f"inc_{track.track_id}_{int(time.time()*1000)}"
+            start_time = time.time()
+            deadline = start_time + CCTV.get('unknown_timeout', 20.0)
+            self.pending_incidents[incident_id] = {
+                'start_time': start_time,
+                'deadline': deadline,
+                'resolved': False,
+                'triggered': False,
+                'last_seen_time': track.last_seen,
+                'track_id': track.track_id,
+            }
+            logger.info(f"📝 Registered pending incident {incident_id} for track {track.track_id} (deadline in {deadline - start_time:.0f}s)")
+            return incident_id
+        except Exception as e:
+            logger.error(f"Failed to register incident: {e}")
+            return ""
+
+    def _resolve_incident(self, incident_id: str, reason: str = ""):
+        """Resolve or cancel a pending incident to avoid double alarm."""
+        try:
+            incident = self.pending_incidents.get(incident_id)
+            if incident and not incident['resolved']:
+                incident['resolved'] = True
+                logger.info(f"✅ Resolved incident {incident_id} ({reason})")
+        except Exception as e:
+            logger.error(f"Failed to resolve incident {incident_id}: {e}")
+
+    def _process_pending_incidents(self):
+        """Process all pending incidents and trigger alarm if deadlines have passed even if person left the frame."""
+        try:
+            now = time.time()
+            for incident_id, incident in list(self.pending_incidents.items()):
+                if incident['resolved']:
+                    continue
+                if now >= incident['deadline'] and not incident['triggered']:
+                    # Trigger alarm once for this incident
+                    logger.warning(f"🚨 Incident deadline reached for {incident_id} - triggering alarm (subject may have left)")
+                    try:
+                        # Play alarm without track context
+                        if self.sound_player and not self.sound_player.is_alarm_playing() and now >= getattr(self, 'silence_until', 0.0):
+                            self.sound_player.play_alarm()
+                        if self.hardware_manager:
+                            try:
+                                self.hardware_manager.play_alarm()
+                                self.hardware_manager.unknown_person_detected()
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        logger.error(f"Error triggering alarm for incident {incident_id}: {e}")
+                    incident['triggered'] = True
+                    incident['resolved'] = True
+        except Exception as e:
+            logger.error(f"Error processing pending incidents: {e}")
     
     def _handle_unknown_person_timeout(self, track: PersonTrack, current_time: float):
         """Handle when person doesn't show face within timeout"""
@@ -2202,23 +2146,8 @@ class AdvancedPersonTracker:
                 # Known but needs re-verification
                 color = (0, 255, 255)  # Yellow
                 status = f"KNOWN: {track.identity} (needs verification)"
-            elif track.security_alarm_triggered:
-                # Security alarm triggered - BRIGHT RED
-                color = (0, 0, 255)  # Bright red
-                status = "🚨 SECURITY BREACH!"
-            elif track.verification_request_sent:
-                # Enhanced security verification request
-                color = (255, 165, 0)  # Orange
-                verification_elapsed = current_time - track.verification_start_time
-                timeout_remaining = SECURITY.get('verification_request_timeout', 20.0) - verification_elapsed
-                status = f"VERIFY FACE ({timeout_remaining:.1f}s)"
-            elif track.person_detection_confirmed:
-                # Person confirmed present, waiting for verification request
-                color = (255, 140, 0)  # Dark orange
-                detection_duration = current_time - track.person_detection_start_time
-                status = f"DETECTED ({detection_duration:.1f}s) - AWAITING VERIFICATION"
             elif track.verification_requested:
-                # Legacy verification request
+                # Waiting for face verification - show attempt progress
                 color = (255, 165, 0)  # Orange
                 timeout_remaining = SECURITY.get('verification_timeout', 10.0) - (current_time - track.verification_start_time)
                 
@@ -2303,19 +2232,12 @@ class AdvancedPersonTracker:
         
         # Draw system info
         trusted_count = sum(1 for t in tracks if t.is_trusted)
-        verification_count = sum(1 for t in tracks if t.verification_requested or t.verification_request_sent)
-        unknown_count = sum(1 for t in tracks if not t.is_known and not t.verification_requested and not t.verification_request_sent)
+        verification_count = sum(1 for t in tracks if t.verification_requested)
+        unknown_count = sum(1 for t in tracks if not t.is_known and not t.verification_requested)
         guest_count = sum(1 for t in tracks if t.is_guest)
-        security_alarm_count = sum(1 for t in tracks if t.security_alarm_triggered)
-        active_alarms = len(self.security_alarms)
 
         info_text = f"Trusted: {trusted_count} | Verifying: {verification_count} | Unknown: {unknown_count} | Guests: {guest_count}"
         cv2.putText(annotated, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        # Show security alarm status
-        if security_alarm_count > 0 or active_alarms > 0:
-            alarm_text = f"🚨 SECURITY ALARMS: {security_alarm_count} active | {active_alarms} persistent"
-            cv2.putText(annotated, alarm_text, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         # Draw guest mode indicator
         if guest_count > 0:
