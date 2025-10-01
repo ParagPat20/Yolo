@@ -120,6 +120,12 @@ SECURITY = {
     'max_unknown_faces_stored': 1000,  # Maximum unknown faces to store
     'verification_timeout': 15.0,  # Seconds to wait for face verification (increased)
     'trusted_person_memory': 600.0,  # Seconds to remember trusted person without face (10 minutes)
+    
+    # Enhanced security parameters
+    'person_detection_threshold': 2.0,  # Seconds person must be detected before verification request
+    'verification_request_timeout': 20.0,  # Seconds to wait for face verification before alarm
+    'persistent_alarm_enabled': True,  # Continue alarm even if person leaves
+    'alarm_duration_minutes': 2,  # Duration of alarm in minutes
 }
 
 # CCTV Hardware Configuration

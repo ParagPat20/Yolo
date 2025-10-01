@@ -432,6 +432,16 @@ class CCTVSystem:
                 except Exception as e:
                     logger.error(f"Error stopping recording: {e}")
 
+        # Stop all persistent security alarms
+        if hasattr(self.person_tracker, 'security_alarms'):
+            for alarm_id, alarm_info in self.person_tracker.security_alarms.items():
+                if alarm_info['active']:
+                    logger.info(f"🔇 Stopping persistent alarm {alarm_id} during cleanup")
+                    if self.sound_player and self.sound_player.is_alarm_playing():
+                        self.sound_player.stop_alarm()
+            self.person_tracker.security_alarms.clear()
+            logger.info("🧹 Cleared all persistent security alarms")
+
         # Cleanup camera
         if self.camera:
             if hasattr(self.camera, 'stop'):
