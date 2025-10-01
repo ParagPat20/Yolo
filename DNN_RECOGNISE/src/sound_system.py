@@ -233,7 +233,7 @@ class SoundSystem:
                     'evening': "Good evening!"
                 },
                 'welcome_back': "Welcome back!",
-                'guest_mode_activated': "Guest mode activated.",
+                'guest_mode_activated': "Hello, Welcome, Guest mode activated.",
                 'guest_mode_expired': "Guest mode expired."
             }
     

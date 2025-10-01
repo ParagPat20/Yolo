@@ -1266,14 +1266,21 @@ class AdvancedPersonTracker:
             today_start = datetime(current_time_dt.year, current_time_dt.month, current_time_dt.day).timestamp()
 
             if current_time - track.last_greeting_time > 3600:  # Greet at most once per hour
-                # Use time-based greeting for first identification of the day
-                if track.last_greeting_time < today_start:
-                    logger.info(f"👋 First greeting today for {identity}")
-                    self._greet_person(track, current_time)
-                else:
-                    # Welcome back for subsequent identifications
-                    logger.info(f"🎉 Welcome back greeting for {identity}")
-                    self._welcome_back_person(track, current_time)
+                # Temporarily bypass silence window to allow immediate greeting
+                previous_silence_until = getattr(self, 'silence_until', 0.0)
+                self.silence_until = 0.0
+                try:
+                    # Use time-based greeting for first identification of the day
+                    if track.last_greeting_time < today_start:
+                        logger.info(f"👋 First greeting today for {identity}")
+                        self._greet_person(track, current_time)
+                    else:
+                        # Welcome back for subsequent identifications
+                        logger.info(f"🎉 Welcome back greeting for {identity}")
+                        self._welcome_back_person(track, current_time)
+                finally:
+                    # Restore previous silence window state (will be updated below)
+                    self.silence_until = previous_silence_until
 
                 track.last_greeting_time = current_time
 
@@ -1284,7 +1291,7 @@ class AdvancedPersonTracker:
             self.global_guest_mode_until = current_time + CCTV.get('guest_mode_duration', 60.0)
             self.global_guest_host_name = identity
 
-            # Set global silence window (10 minutes)
+            # Set global silence window after greeting to avoid spam
             self.silence_until = current_time + 60.0
 
             logger.info(f"✅ Person {track.track_id} identified as {identity} (confidence: {confidence:.2f})")
