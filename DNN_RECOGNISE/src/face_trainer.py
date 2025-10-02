@@ -357,6 +357,16 @@ if __name__ == "__main__":
         logger.info(f"🎯 Total persons trained: {len(unique_ids)}")
         logger.info(f"📊 Total samples: {len(faces)}")
         
+        # Generate/update name-specific WAV greetings after training
+        try:
+            from update_wav_files import WAVFileUpdater
+            updater = WAVFileUpdater()
+            logger.info("🎵 Generating name-specific greeting WAV files...")
+            gen, skip = updater.update_name_greetings(force_update=True)
+            logger.info(f"✅ Name WAVs generated: {gen}, skipped existing: {skip}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate name-specific WAVs: {e}")
+        
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")
         logger.error("💡 Make sure you have run face_taker.py to collect training images first")

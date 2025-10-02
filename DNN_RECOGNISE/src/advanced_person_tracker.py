@@ -787,6 +787,7 @@ class AdvancedPersonTracker:
         # First person greeting tracking
         self.first_person_greeting_today = False
         self.first_person_greeting_time = 0.0
+        self._last_reset_day = None  # Track last date when daily greeting flags were reset
 
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
@@ -1992,9 +1993,8 @@ class AdvancedPersonTracker:
         # Play greeting audio files - DISABLED during alarm
         if self.sound_player and not self.sound_player.is_alarm_playing() and time.time() >= getattr(self, 'silence_until', 0.0):
             try:
-                # Play both time-based greeting and welcome message
-                self.sound_player.play_time_based_greeting()
-                self.sound_player.play_known_person_greeting(person_name)
+                # Prefer name-personalized time-based greeting; fallback handled inside
+                self.sound_player.play_time_based_greeting_named(person_name)
             except Exception as e:
                 logger.warning(f"Greeting audio not available: {e}")
         elif self.sound_player and self.sound_player.is_alarm_playing():
@@ -2126,14 +2126,14 @@ class AdvancedPersonTracker:
             logger.info(f"🧹 Cleared trusted memory for {name} (expired)")
     
     def _reset_daily_greeting_tracking(self, current_time: float):
-        """Reset first person greeting tracking for new day"""
-        current_time_dt = datetime.now()
-        today_start = datetime(current_time_dt.year, current_time_dt.month, current_time_dt.day).timestamp()
-        
-        # Reset if it's a new day
-        if current_time >= today_start and self.first_person_greeting_time < today_start:
+        """Reset first person greeting tracking once per calendar day."""
+        now = datetime.now()
+        today_key = (now.year, now.month, now.day)
+        # Only reset once per day
+        if self._last_reset_day != today_key:
             self.first_person_greeting_today = False
             self.first_person_greeting_time = 0.0
+            self._last_reset_day = today_key
             logger.info("🌅 New day detected - first person greeting tracking reset")
     
     def _handle_unknown_person(self, frame: np.ndarray, track: PersonTrack, face_roi: np.ndarray, current_time: float):

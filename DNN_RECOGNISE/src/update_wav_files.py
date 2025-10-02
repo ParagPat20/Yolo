@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Import settings
 try:
-    from settings.settings import SOUND_SYSTEM, AUDIO
+    from settings.settings import SOUND_SYSTEM, AUDIO, PATHS
 except ImportError:
     logger.error("❌ Could not import settings. Please ensure settings.py is available.")
     sys.exit(1)
@@ -41,6 +41,93 @@ class WAVFileUpdater:
         logger.info(f"🔊 WAV File Updater initialized")
         logger.info(f"📁 WAV files directory: {self.wav_files_dir}")
         logger.info(f"🌐 Language: {self.language}")
+
+    def _sanitize_name(self, name: str) -> str:
+        """Make a filesystem-safe slug for name-based filenames."""
+        try:
+            safe = ''.join(ch.lower() if ch.isalnum() else '_' for ch in name.strip())
+            while '__' in safe:
+                safe = safe.replace('__', '_')
+            return safe.strip('_') or 'person'
+        except Exception:
+            return 'person'
+
+    def _load_names(self) -> Dict[str, str]:
+        """Load names mapping from names.json (id -> name)."""
+        names_path = PATHS.get('names_file', os.path.join(os.path.dirname(__file__), 'names.json'))
+        if not os.path.exists(names_path):
+            logger.warning(f"⚠️ names.json not found at {names_path}")
+            return {}
+        try:
+            import json
+            with open(names_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                return json.loads(content) if content else {}
+        except Exception as e:
+            logger.error(f"❌ Failed to load names.json: {e}")
+            return {}
+
+    def _get_named_greeting_texts(self, name: str) -> Dict[str, str]:
+        """Return language-specific named greeting texts."""
+        if self.language == 'gu':
+            return {
+                'morning': f"સુપ્રભાત, {name}!",
+                'afternoon': f"શુભ બપોર, {name}!",
+                'evening': f"શુભ સાંજ, {name}!",
+                'welcome_back': f"પાછા આવ્યા માટે આભાર, {name}!",
+            }
+        else:
+            return {
+                'morning': f"Good morning, {name}!",
+                'afternoon': f"Good afternoon, {name}!",
+                'evening': f"Good evening, {name}!",
+                'welcome_back': f"Welcome back, {name}!",
+            }
+
+    def update_name_greetings(self, force_update: bool = False) -> Tuple[int, int]:
+        """Generate per-name greeting WAVs from names.json.
+
+        Files generated:
+          - time_based_greeting_morning_name_<name>.wav
+          - time_based_greeting_afternoon_name_<name>.wav
+          - time_based_greeting_evening_name_<name>.wav
+          - welcome_back_name_<name>.wav
+        """
+        if not self.check_piper_availability():
+            logger.warning("⚠️ Piper TTS not available - skipping named greetings")
+            return 0, 0
+
+        names_map = self._load_names()  # id -> name
+        if not names_map:
+            logger.info("ℹ️ No names found for generating name-specific greetings")
+            return 0, 0
+
+        generated = 0
+        skipped = 0
+        for _, name in names_map.items():
+            if not name:
+                continue
+            safe = self._sanitize_name(name)
+            texts = self._get_named_greeting_texts(name)
+            # Build filename -> text pairs
+            items = [
+                (f"time_based_greeting_morning_name_{safe}.wav", texts['morning']),
+                (f"time_based_greeting_afternoon_name_{safe}.wav", texts['afternoon']),
+                (f"time_based_greeting_evening_name_{safe}.wav", texts['evening']),
+                (f"welcome_back_name_{safe}.wav", texts['welcome_back']),
+            ]
+            for filename, text in items:
+                filepath = os.path.join(self.wav_files_dir, filename)
+                if not os.path.exists(filepath) or force_update:
+                    if self.generate_wav_file(text, filepath):
+                        generated += 1
+                    else:
+                        logger.warning(f"⚠️ Failed to generate: {filename}")
+                else:
+                    skipped += 1
+
+        logger.info(f"✅ Named greetings: Generated={generated}, Skipped={skipped}")
+        return generated, skipped
     
     def check_piper_availability(self) -> bool:
         """Check if Piper TTS is available"""
@@ -212,7 +299,9 @@ class WAVFileUpdater:
                     logger.info(f"⏭️ Skipping existing file: {filename}")
                     skipped_count += 1
         
-        return generated_count, skipped_count
+        # Also generate name-specific greetings
+        gen_names, skip_names = self.update_name_greetings(force_update=force_update)
+        return generated_count + gen_names, skipped_count + skip_names
     
     def update_specific_wav_file(self, message_key: str, variant: str = None) -> bool:
         """Update a specific WAV file"""

@@ -270,9 +270,31 @@ class SoundPlayer:
         else:
             self.play_wav_file("time_based_greeting_evening.wav")
     
+    def play_time_based_greeting_named(self, name: str):
+        """Play time-based greeting using name-specific WAVs if available, else fallback to generic."""
+        if not name:
+            return self.play_time_based_greeting()
+        safe = ''.join(ch.lower() if ch.isalnum() else '_' for ch in name.strip()).strip('_') or 'person'
+        current_hour = datetime.now().hour
+        if 5 <= current_hour < 12:
+            candidate = f"time_based_greeting_morning_name_{safe}.wav"
+        elif 12 <= current_hour < 17:
+            candidate = f"time_based_greeting_afternoon_name_{safe}.wav"
+        else:
+            candidate = f"time_based_greeting_evening_name_{safe}.wav"
+        if os.path.exists(os.path.join(self.wav_files_dir, candidate)):
+            self.play_wav_file(candidate)
+        else:
+            self.play_time_based_greeting()
+    
     def play_welcome_back(self, name: str):
         """Play welcome back message (uses template)"""
         # For now, play generic welcome back - could be enhanced to use name-specific files
+        if name:
+            safe = ''.join(ch.lower() if ch.isalnum() else '_' for ch in name.strip()).strip('_') or 'person'
+            candidate = f"welcome_back_name_{safe}.wav"
+            if os.path.exists(os.path.join(self.wav_files_dir, candidate)):
+                return self.play_wav_file(candidate)
         self.play_wav_file("welcome_back.wav")
     
     def play_guest_mode_activated(self, host_name: str):
