@@ -157,8 +157,8 @@ CCTV = {
     'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
     # Time-based greeting settings
     'first_person_greeting_enabled': True,  # Enable first person greeting of the day
-    'morning_greeting_hours': (5, 12),  # Morning greeting time range (5 AM to 12 PM)
-    'evening_greeting_hours': (17, 23),  # Evening greeting time range (5 PM to 11 PM)
+    'morning_greeting_hours': (6, 12),  # Morning greeting time range (5 AM to 12 PM)
+    'evening_greeting_hours': (16, 23),  # Evening greeting time range (5 PM to 11 PM)
     'first_person_greeting_cooldown': 3600.0,  # Cooldown for first person greeting (1 hour)
 }
 

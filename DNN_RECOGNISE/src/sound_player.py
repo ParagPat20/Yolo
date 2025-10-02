@@ -305,6 +305,10 @@ class SoundPlayer:
         """Play guest mode expiration message"""
         self.play_wav_file("guest_mode_expired.wav")
 
+    def play_system_armed(self):
+        """Play system armed message"""
+        self.play_wav_file("system_armed.wav")
+
     def play_system_welcome(self):
         """Play system startup welcome message"""
         self.play_wav_file("welcome_to_jech_aerotech.wav")

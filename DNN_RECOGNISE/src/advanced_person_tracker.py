@@ -1008,6 +1008,13 @@ class AdvancedPersonTracker:
             except Exception as e:
                 logger.warning(f"Hardware guest mode revert not available: {e}")
 
+        # Speak that the system is armed after guest mode expires
+        if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
+            try:
+                self.sound_player.play_system_armed()
+            except Exception as e:
+                logger.warning(f"System armed sound not available: {e}")
+
         # If this guest is still unknown, start monitoring them normally
         if not guest_track.is_known:
             logger.info(f"👀 Now monitoring former guest (track {guest_track.track_id}) as potential unknown person")
