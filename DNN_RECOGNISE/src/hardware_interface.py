@@ -393,7 +393,6 @@ class HardwareManager:
         self._ldr_bright = None
 
         self._init_hardware()
-
     def _init_hardware(self):
         """Initialize all hardware components"""
         try:
