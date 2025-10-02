@@ -2128,7 +2128,8 @@ class AdvancedPersonTracker:
             # Play welcome message instead of "guest mode activated"
             if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
                 try:
-                    self.sound_player.play_guest_welcome()
+                    # self.sound_player.play_guest_welcome()
+                    print("Guest is here")
                 except Exception as e:
                     logger.warning(f"Guest welcome sound not available: {e}")
             
