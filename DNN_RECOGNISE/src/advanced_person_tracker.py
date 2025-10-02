@@ -2374,17 +2374,8 @@ def initialize_camera(camera_index: int = 0):
                 display="lores"
             )
             picam2.configure(preview_config)
-            # Set controls: FPS and Continuous AF if available
-            try:
-                picam2.set_controls({"FrameRate": CAMERA['fps']})
-            except Exception:
-                pass
-            try:
-                from libcamera import controls
-                if hasattr(controls, 'AfModeEnum'):
-                    picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
-            except Exception:
-                pass
+            # Set autofocus mode
+            picam2.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})  # Normal AF
             
             # Start camera
             picam2.start()

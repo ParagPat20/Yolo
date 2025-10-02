@@ -112,60 +112,50 @@ class CCTVSystem:
 
         logger.info("✅ CCTV System initialized successfully")
 
-    def initialize_camera(self) -> bool:
-        """Initialize camera with enhanced settings"""
+    def initialize_camera(camera_index: int = 0):
+        """Initialize camera with enhanced settings - supports both picamera2 and OpenCV"""
         try:
-            # Try to use `picamera2` first
-            try:
-                from picamera2 import Picamera2, Preview
-                self.camera = Picamera2()
-
-                # Configure with high resolution for CCTV
-                preview_config = self.camera.create_preview_configuration(
-                    main={"size": (CAMERA['width'], CAMERA['height'])},
-                    lores={"size": (640, 360)},
+            if PICAMERA2_AVAILABLE:
+                # Use picamera2 for Raspberry Pi
+                picam2 = Picamera2()
+                
+                # Configure preview with high resolution and low-res display stream
+                preview_config = picam2.create_preview_configuration(
+                    main={"size": (CAMERA['width'], CAMERA['height'])},  # High resolution for processing
+                    lores={"size": (640, 360)},   # Low-res display stream for performance
                     display="lores"
                 )
-                self.camera.configure(preview_config)
-                # Configure controls: FPS and Continuous AF if available
-                try:
-                    from libcamera import controls
-                except Exception:
-                    controls = None
-                try:
-                    self.camera.set_controls({"FrameRate": CAMERA['fps']})
-                except Exception:
-                    pass
-                try:
-                    if controls is not None and hasattr(controls, 'AfModeEnum'):
-                        self.camera.set_controls({"AfMode": controls.AfModeEnum.Continuous})
-                except Exception:
-                    pass
-                self._continuous_af_enabled = False
-                self.camera.start()
-
+                picam2.configure(preview_config)
+                # Set autofocus mode
+                picam2.set_controls({"AfMode": 1, "AfTrigger": 0, "FrameRate": CAMERA['fps']})  # Normal AF
+                
+                # Start camera
+                picam2.start()
+                
                 logger.info(f"✅ Picamera2 initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps with autofocus")
-                return True
-
-            except Exception:
-                logger.warning("📷 Picamera2 not available, falling back to OpenCV")
-
-            # Fallback to OpenCV
-            self.camera = cv2.VideoCapture(CAMERA['index'])
-            if not self.camera.isOpened():
-                logger.error("❌ Could not open camera")
-                return False
-
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA['width'])
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA['height'])
-            self.camera.set(cv2.CAP_PROP_FPS, CAMERA['fps'])
-
-            logger.info(f"✅ OpenCV camera initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps")
-            return True
-
+                return picam2
+            else:
+                # Fallback to OpenCV for non-Raspberry Pi systems
+                cam = cv2.VideoCapture(camera_index)
+                if not cam.isOpened():
+                    logger.error("Could not open webcam")
+                    return None
+                
+                # Set camera properties
+                cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA['width'])
+                cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA['height'])
+                cam.set(cv2.CAP_PROP_FPS, CAMERA['fps'])
+                
+                # Try to enable auto-exposure and auto-focus if available
+                cam.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+                
+                logger.info(f"✅ OpenCV camera initialized: {CAMERA['width']}x{CAMERA['height']} @ {CAMERA['fps']}fps")
+                return cam
+            
         except Exception as e:
-            logger.error(f"❌ Failed to initialize camera: {e}")
-            return False
+            logger.error(f"Error initializing camera: {e}")
+            return None
+
 
     def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
         """Read frame from camera"""
