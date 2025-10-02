@@ -32,3 +32,7 @@ Thumbs.db
 /DNN_RECOGNISE/models/arcface_r100.onnx
 /DNN_RECOGNISE/recordings/
 /DNN_RECOGNISE/unknown_faces/
+/DNN_RECOGNISE/images/
+/DNN_RECOGNISE/names.json
+/DNN_RECOGNISE/trainer.yml
+/DNN_RECOGNISE/models/
