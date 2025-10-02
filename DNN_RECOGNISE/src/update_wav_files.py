@@ -204,7 +204,7 @@ class WAVFileUpdater:
                 'guest_mode_expired': "Guest mode expired.",
                 'first_person_morning_greeting': "Hello, Good morning!",
                 'first_person_evening_greeting': "Hello, Good evening!",
-                'guest_welcome': "Welcome!",
+                'guest_welcome': "Hello, Welcome, Guest mode activated.",
                 'system_armed': "The system is armed."
             }
     

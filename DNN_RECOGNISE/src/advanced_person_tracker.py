@@ -788,6 +788,8 @@ class AdvancedPersonTracker:
         self.first_person_greeting_today = False
         self.first_person_greeting_time = 0.0
         self._last_reset_day = None  # Track last date when daily greeting flags were reset
+        # Speech timing marker to suppress immediate duplicate messages
+        self.last_spoken_greeting_ts = 0.0
 
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
@@ -2002,6 +2004,7 @@ class AdvancedPersonTracker:
             try:
                 # Prefer name-personalized time-based greeting; fallback handled inside
                 self.sound_player.play_time_based_greeting_named(person_name)
+                self.last_spoken_greeting_ts = time.time()
             except Exception as e:
                 logger.warning(f"Greeting audio not available: {e}")
         elif self.sound_player and self.sound_player.is_alarm_playing():
@@ -2042,42 +2045,27 @@ class AdvancedPersonTracker:
             print(f"Welcome back, {person_name}!")
     
     def _first_person_greeting(self, track: PersonTrack, current_time: float):
-        """Greet the first person of the day with time-based greeting"""
+        """Greet the first person of the day with time-based greeting using name."""
         person_name = track.identity
-        greeting_type = self._get_first_person_greeting_type()
-        
-        logger.info(f"🌅 First person greeting ({greeting_type}) for {person_name}")
+        logger.info(f"🌅 First person greeting for {person_name}")
 
-        # Play first person greeting audio
+        # Prefer name-personalized time-based greeting
         if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
             try:
-                if greeting_type == "morning":
-                    self.sound_player.play_first_person_morning_greeting()
-                elif greeting_type == "evening":
-                    self.sound_player.play_first_person_evening_greeting()
-                else:
-                    # Fallback to regular time-based greeting
-                    self.sound_player.play_time_based_greeting()
+                self.sound_player.play_time_based_greeting_named(person_name)
+                self.last_spoken_greeting_ts = time.time()
             except Exception as e:
                 logger.warning(f"First person greeting audio not available: {e}")
         elif self.hardware_manager:
             try:
-                if greeting_type == "morning":
-                    self.hardware_manager.greet_person(f"Good morning, {person_name}")
-                elif greeting_type == "evening":
-                    self.hardware_manager.greet_person(f"Good evening, {person_name}")
-                else:
-                    self.hardware_manager.greet_person(person_name)
+                greeting = self._get_time_based_greeting()
+                self.hardware_manager.greet_person(f"{greeting}, {person_name}")
             except Exception as e:
                 logger.warning(f"Hardware first person greeting not available: {e}")
         else:
             # Fallback to text output
-            if greeting_type == "morning":
-                print(f"Good morning, {person_name}! (First person today)")
-            elif greeting_type == "evening":
-                print(f"Good evening, {person_name}! (First person today)")
-            else:
-                print(f"Hello, {person_name}! (First person today)")
+            greeting = self._get_time_based_greeting()
+            print(f"{greeting}, {person_name}! (First person today)")
     
     def _needs_reverification(self, track: PersonTrack, current_time: float) -> bool:
         """Check if trusted person needs re-verification"""
