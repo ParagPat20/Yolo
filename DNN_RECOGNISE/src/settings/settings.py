@@ -160,6 +160,8 @@ CCTV = {
     'morning_greeting_hours': (6, 12),  # Morning greeting time range (5 AM to 12 PM)
     'evening_greeting_hours': (16, 23),  # Evening greeting time range (5 PM to 11 PM)
     'first_person_greeting_cooldown': 3600.0,  # Cooldown for first person greeting (1 hour)
+    # Alarm active window (24h local time): start at 23:00, end at 08:00 (overnight)
+    'alarm_active_hours': {'start': 23, 'end': 8},
 }
 
 # Audio Settings

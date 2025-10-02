@@ -1684,6 +1684,35 @@ class AdvancedPersonTracker:
     def _trigger_unknown_person_alarm(self, track: PersonTrack, current_time: float):
         """Trigger immediate alarm for unknown person with 2-minute duration"""
         try:
+            # Respect alarm active window from settings
+            try:
+                start_h = CCTV.get('alarm_active_hours', {}).get('start', 23)
+                end_h = CCTV.get('alarm_active_hours', {}).get('end', 8)
+                hour = datetime.now().hour
+                in_window = (hour >= start_h) or (hour < end_h) if start_h > end_h else (start_h <= hour < end_h)
+            except Exception:
+                in_window = True
+            if not in_window:
+                logger.info("🕒 Outside alarm window - suppressing alarm, continuing recording/LED only")
+                # Start recording if configured but do not play alarms
+                if CCTV['recording_enabled']:
+                    initial_len = CCTV.get('unknown_initial_record_seconds', 10.0)
+                    track.recording_end_time = current_time + initial_len
+                    if not track.is_recording:
+                        self._start_recording(track)
+                # Update LEDs to alert state without sound
+                if self.hardware_manager:
+                    try:
+                        self.hardware_manager.unknown_person_detected()
+                    except Exception:
+                        pass
+                # Mark states and return
+                track.alert_sent = True
+                track.is_known = False
+                track.is_trusted = False
+                track.identity = "Unknown"
+                track.verification_requested = False
+                return
             # Do not trigger alarm if guest mode applies
             if track.is_guest or (current_time < getattr(self, 'global_guest_mode_until', 0.0)):
                 logger.info(f"👥 Guest mode active - skipping alarm for track {track.track_id}")
@@ -1764,8 +1793,17 @@ class AdvancedPersonTracker:
                 alarm_already_playing = True
                 logger.info("🚨 Alarm already playing - skipping new alarm")
             
-            # Play alarm sound only if not already playing
-            if not alarm_already_playing and self.sound_player:
+            # Respect alarm active window for verified-unknown alarm
+            try:
+                start_h = CCTV.get('alarm_active_hours', {}).get('start', 23)
+                end_h = CCTV.get('alarm_active_hours', {}).get('end', 8)
+                hour = datetime.now().hour
+                in_window = (hour >= start_h) or (hour < end_h) if start_h > end_h else (start_h <= hour < end_h)
+            except Exception:
+                in_window = True
+
+            # Play alarm sound only if in window and not already playing
+            if in_window and not alarm_already_playing and self.sound_player:
                 try:
                     self.sound_player.play_alarm()
                     logger.info(f"🚨 Extended alarm started for verified unknown person {track.track_id}")
