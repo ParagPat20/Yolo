@@ -13,12 +13,9 @@ CAMERA = {
 
 # Advanced person detection settings
 PERSON_DETECTION = {
-    'method': 'yolov8',  # Options: 'yolov8', 'yolo_face', 'combined'
     'confidence_threshold': 0.5,  # Minimum confidence for person detection
     'nms_threshold': 0.4,  # Non-maximum suppression threshold
     'input_size': 640,  # Input size for YOLO model (416, 512, 640, 800)
-    'use_gpu': False,  # Set to True if you have CUDA-enabled OpenCV
-    'track_classes': [0],  # COCO class IDs to track (0 = person)z
 }
 
 # Face detection settings (enhanced)
@@ -28,13 +25,11 @@ FACE_DETECTION = {
     'min_neighbors': 6,    # Reduced for better sensitivity
     'min_size': (30, 30),  # Minimum face size to detect
     'dnn_confidence_threshold': 0.5,  # Minimum confidence for DNN detection (lowered for better detection)
-    'yolo_confidence_threshold': 0.6,  # Minimum confidence for YOLO face detection
-    'ensemble_voting_threshold': 0.6,  # Minimum agreement ratio for ensemble
 }
 
 # Training settings. Number of images needed to train the model.
 TRAINING = {
-    'samples_needed': 100
+    'samples_needed': 70
 }
 
 # Model and data paths
@@ -77,48 +72,27 @@ FACE_RECOGNITION = {
 
 # Advanced person tracking settings
 PERSON_TRACKING = {
-    # Tracking algorithm to use for person tracking.
-    # Options: 'bytetrack' (default, robust), 'deepsort', 'sort'
-    'tracking_method': 'bytetrack',
-
     # Maximum number of frames a person can be missing before their track is removed.
     # Higher values make tracking more stable but may keep lost tracks longer.
-    'max_disappeared': 20,
+    'max_disappeared': 15,
 
     # Maximum pixel distance allowed between detections to associate them with the same person.
     # Larger values allow for more movement but may increase false associations.
-    'max_distance': 170,
-
-    # Number of frames to keep a track "alive" in ByteTrack after last detection.
-    # Higher values help maintain identity through occlusions.
-    'track_buffer': 40,
-
-    # Minimum similarity threshold (0.0-1.0) for associating detections with existing tracks.
-    # Lower values are more lenient and may increase false matches.
-    'match_threshold': 0.6,
-
-    # Expected camera frame rate (frames per second) for tracking logic.
-    # Used to tune time-based parameters in the tracker.
-    'frame_rate': 10,
+    'max_distance': 200,
 }
 
 # Face tracking and recognition integration
 FACE_TRACKING = {
-    'face_recognition_interval': 5,  # Frames between face recognition attempts
-    'min_face_size': 50,  # Minimum face size for recognition
-    'max_face_age': 100,  # Maximum frames to track a face without recognition
-    'recognition_confidence_threshold': 0.4,  # Minimum confidence for face recognition
+    'face_recognition_interval': 10,  # Frames between face recognition attempts
+    'min_face_size': 30,  # Minimum face size for recognition
     'unknown_face_alert_cooldown': 5.0,  # Seconds between unknown face alerts
 }
 
 # Security and alerting settings
 SECURITY = {
-    'unknown_person_alert': True,  # Enable alerts for unknown persons
     'danger_alert_message': "🚨 DANGER: Unknown person detected!",
     'log_unknown_faces': True,  # Save unknown faces for analysis
-    'alert_email': False,  # Enable email alerts (requires configuration)
     'max_unknown_faces_stored': 1000,  # Maximum unknown faces to store
-    'verification_timeout': 15.0,  # Seconds to wait for face verification (increased)
     'trusted_person_memory': 600.0,  # Seconds to remember trusted person without face (10 minutes)
 }
 
@@ -158,9 +132,9 @@ HARDWARE = {
 # CCTV System Settings
 CCTV = {
     'motion_detection_enabled': True,  # Enable PIR-based motion detection
-    'motion_cooldown': 5.0,  # Seconds between motion detections
+    'motion_cooldown': 3.0,  # Seconds between motion detections
     'led_auto_brightness': True,  # Auto-control high brightness LED
-    'led_brightness_duration': 30.0,  # How long to keep LED on after motion
+    'led_brightness_duration': 15.0,  # How long to keep LED on after motion
     'recording_enabled': True,  # Enable video recording for unknown persons
     'recording_duration': 60.0,  # How long to record unknown persons (seconds)
     'recording_fps': 30,  # Recording frame rate
@@ -172,7 +146,7 @@ CCTV = {
     'max_verification_attempts': 3,  # Maximum verification attempts
     'verification_cooldown': 2.0,  # Cooldown between verification attempts
     # Presence gate: require continuous presence before asking to verify
-    'presence_gate_seconds': 2.0,  # Seconds of presence before verification prompt
+    'presence_gate_seconds': 1.5,  # Seconds of presence before verification prompt
     # Recording behavior
     'unknown_initial_record_seconds': 600.0,  # Initial recording length for unknown detection (10 minutes)
     # Guest Mode Settings
@@ -181,19 +155,15 @@ CCTV = {
     'guest_detection_distance': 100.0,  # Maximum distance for guest association (pixels)
     'guest_trajectory_similarity': 0.7,  # Minimum trajectory similarity for guest detection
     'guest_mode_yellow_pulse_interval': 1.0,  # Yellow LED pulse interval in seconds
+    # Time-based greeting settings
+    'first_person_greeting_enabled': True,  # Enable first person greeting of the day
+    'morning_greeting_hours': (5, 12),  # Morning greeting time range (5 AM to 12 PM)
+    'evening_greeting_hours': (17, 23),  # Evening greeting time range (5 PM to 11 PM)
+    'first_person_greeting_cooldown': 3600.0,  # Cooldown for first person greeting (1 hour)
 }
 
-# Audio Settings (Visual-only messages)
+# Audio Settings
 AUDIO = {
-    'greeting_morning': 'Good morning',
-    'greeting_afternoon': 'Good afternoon',
-    'greeting_evening': 'Good evening',
-    'unknown_alert': 'Alert! Unknown person detected!',
-    'verification_request': 'Please look at the camera for verification',
-    'welcome_back': 'Welcome back',
-    'guest_mode_message': "Guest Mode Activated",
-    'guest_mode_reverted': 'Guest mode EXPIRED',
-    'unknown_timeout': 'Unknown person timeout. Please verify face',
     'alarm_sound_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/alarm.mp3',
     'verification_beep_path': '/home/jecon/yolo/DNN_RECOGNISE/sounds/verification_beep.mp3',
     'use_mp3_sounds': True,  # Enable MP3 sound playback
@@ -225,26 +195,3 @@ SOUND_SYSTEM = {
 }
 
 # Voice Settings removed (sound system disabled)
-
-# Legacy compatibility settings
-CONFIDENCE_THRESHOLD = 35  # For LBPH compatibility
-OBJECT_DETECTION = {
-    'method': 'yolo',  # Options: 'yolo', 'custom', 'combined'
-    'confidence_threshold': 0.5,  # Minimum confidence for object detection
-    'nms_threshold': 0.4,  # Non-maximum suppression threshold
-    'input_size': 416,  # Input size for YOLO model (416, 512, 608)
-    'use_gpu': False,  # Set to True if you have CUDA-enabled OpenCV
-    'target_classes': ['car', 'truck', 'bus', 'motorcycle', 'bicycle', 'person', 'building'],  # Classes to focus on
-}
-
-# Legacy tracking settings (kept for backward compatibility)
-TRACKING = {
-    'tracking_duration': 2,  # Duration in seconds to track a recognized face/object
-    'unknown_tracking_duration': 0.5,  # Shorter tracking for unknown faces (allows re-recognition)
-    'max_distance_threshold': 100,  # Maximum distance between face/object positions to consider it the same
-    'recognition_cooldown': 1.0,  # Minimum time between recognition attempts (seconds)
-    'unknown_retry_interval': 0.5,  # How often to retry recognition for unknown faces (seconds)
-    'verification_interval': 3.0,  # How often to re-verify ALL faces (including known ones)
-    'confidence_threshold_for_reverify': 70.0,  # Re-verify faces with confidence below this threshold more often
-    'matching_threshold': 0.3,  # Minimum score for object matching in tracking
-}

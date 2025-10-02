@@ -286,6 +286,18 @@ class SoundPlayer:
     def play_system_welcome(self):
         """Play system startup welcome message"""
         self.play_wav_file("welcome_to_jech_aerotech.wav")
+    
+    def play_first_person_morning_greeting(self):
+        """Play first person morning greeting"""
+        self.play_wav_file("first_person_morning_greeting.wav")
+    
+    def play_first_person_evening_greeting(self):
+        """Play first person evening greeting"""
+        self.play_wav_file("first_person_evening_greeting.wav")
+    
+    def play_guest_welcome(self):
+        """Play guest welcome message"""
+        self.play_wav_file("guest_welcome.wav")
 
 
 # Global sound player instance

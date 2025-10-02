@@ -212,7 +212,10 @@ class SoundSystem:
                 },
                 'welcome_back': "પાછા આવ્યા માટે આભાર {name}!",
                 'guest_mode_activated': "મહેમાન મોડ સક્રિય થયો છે. {host_name} સાથે મહેમાન આવ્યા છે.",
-                'guest_mode_expired': "મહેમાન મોડ સમાપ્ત થયો છે. સામાન્ય સુરક્ષા પ્રોટોકોલ પર પાછા ફરી રહ્યા છીએ."
+                'guest_mode_expired': "મહેમાન મોડ સમાપ્ત થયો છે. સામાન્ય સુરક્ષા પ્રોટોકોલ પર પાછા ફરી રહ્યા છીએ.",
+                'first_person_morning_greeting': "સુપ્રભાત! આજે પહેલી વ્યક્તિ તમે છો.",
+                'first_person_evening_greeting': "શુભ સાંજ! આજે પહેલી વ્યક્તિ તમે છો.",
+                'guest_welcome': "સ્વાગત છે! મહેમાન તરીકે આપનું સ્વાગત છે."
             }
         else:  # English
             return {
@@ -234,7 +237,10 @@ class SoundSystem:
                 },
                 'welcome_back': "Welcome back!",
                 'guest_mode_activated': "Hello, Welcome, Guest mode activated.",
-                'guest_mode_expired': "Guest mode expired."
+                'guest_mode_expired': "Guest mode expired.",
+                'first_person_morning_greeting': "Hello, Good morning!",
+                'first_person_evening_greeting': "Hello, Good evening!",
+                'guest_welcome': "Welcome!"
             }
     
     def _generate_wav_file(self, text: str, filepath: str, model_path: str, noise_scale: float, length_scale: float):
@@ -435,6 +441,19 @@ class SoundSystem:
         """Enable sound system"""
         self.is_enabled = True
         logger.info("🔊 Sound system enabled")
+    
+    # New greeting methods for first person and guest welcome
+    def play_first_person_morning_greeting(self):
+        """Play first person morning greeting"""
+        self.play_wav_file("first_person_morning_greeting.wav")
+    
+    def play_first_person_evening_greeting(self):
+        """Play first person evening greeting"""
+        self.play_wav_file("first_person_evening_greeting.wav")
+    
+    def play_guest_welcome(self):
+        """Play guest welcome message"""
+        self.play_wav_file("guest_welcome.wav")
 
 
 # Global sound system instance

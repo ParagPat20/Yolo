@@ -783,6 +783,10 @@ class AdvancedPersonTracker:
         # Pending incidents registry: alarm even if subject leaves
         # Structure: {incident_id: {start_time, deadline, resolved, triggered, host_name?, last_seen_time}}
         self.pending_incidents = {}
+        
+        # First person greeting tracking
+        self.first_person_greeting_today = False
+        self.first_person_greeting_time = 0.0
 
         # Create directories
         os.makedirs(PATHS.get('unknown_faces_dir', 'unknown_faces'), exist_ok=True)
@@ -845,6 +849,9 @@ class AdvancedPersonTracker:
 
         # Clean up old trusted memory entries
         self._cleanup_trusted_memory()
+        
+        # Reset daily greeting tracking if new day
+        self._reset_daily_greeting_tracking(time.time())
 
         # Check for guest mode timeout and reversion
         if CCTV['guest_mode_enabled']:
@@ -950,6 +957,13 @@ class AdvancedPersonTracker:
         if guest_track.is_recording:
             self._stop_recording(guest_track.track_id)
             guest_track.is_recording = False
+
+        # Play welcome message instead of "guest mode activated"
+        if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
+            try:
+                self.sound_player.play_guest_welcome()
+            except Exception as e:
+                logger.warning(f"Guest welcome sound not available: {e}")
 
         # Announce guest mode activation
         if self.hardware_manager:
@@ -1270,8 +1284,13 @@ class AdvancedPersonTracker:
                 previous_silence_until = getattr(self, 'silence_until', 0.0)
                 self.silence_until = 0.0
                 try:
-                    # Use time-based greeting for first identification of the day
-                    if track.last_greeting_time < today_start:
+                    # Check if this is the first person today
+                    if self._is_first_person_today(current_time):
+                        logger.info(f"👋 First person greeting today for {identity}")
+                        self._first_person_greeting(track, current_time)
+                        self.first_person_greeting_today = True
+                        self.first_person_greeting_time = current_time
+                    elif track.last_greeting_time < today_start:
                         logger.info(f"👋 First greeting today for {identity}")
                         self._greet_person(track, current_time)
                     else:
@@ -1912,6 +1931,34 @@ class AdvancedPersonTracker:
             return "Good afternoon"
         else:
             return "Good evening"
+    
+    def _is_first_person_today(self, current_time: float) -> bool:
+        """Check if this is the first person recognized today"""
+        if not CCTV.get('first_person_greeting_enabled', True):
+            return False
+        
+        # Check if we've already greeted someone today
+        if self.first_person_greeting_today:
+            return False
+        
+        # Check if enough time has passed since last first person greeting
+        if current_time - self.first_person_greeting_time < CCTV.get('first_person_greeting_cooldown', 3600.0):
+            return False
+        
+        return True
+    
+    def _get_first_person_greeting_type(self) -> str:
+        """Get the type of first person greeting based on current time"""
+        current_hour = datetime.now().hour
+        morning_start, morning_end = CCTV.get('morning_greeting_hours', (5, 12))
+        evening_start, evening_end = CCTV.get('evening_greeting_hours', (17, 23))
+        
+        if morning_start <= current_hour < morning_end:
+            return "morning"
+        elif evening_start <= current_hour < evening_end:
+            return "evening"
+        else:
+            return "general"
 
     def _should_greet_person(self, track: PersonTrack, current_time: float) -> bool:
         """Check if person should be greeted (avoid spam)"""
@@ -1987,6 +2034,44 @@ class AdvancedPersonTracker:
         else:
             print(f"Welcome back, {person_name}!")
     
+    def _first_person_greeting(self, track: PersonTrack, current_time: float):
+        """Greet the first person of the day with time-based greeting"""
+        person_name = track.identity
+        greeting_type = self._get_first_person_greeting_type()
+        
+        logger.info(f"🌅 First person greeting ({greeting_type}) for {person_name}")
+
+        # Play first person greeting audio
+        if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
+            try:
+                if greeting_type == "morning":
+                    self.sound_player.play_first_person_morning_greeting()
+                elif greeting_type == "evening":
+                    self.sound_player.play_first_person_evening_greeting()
+                else:
+                    # Fallback to regular time-based greeting
+                    self.sound_player.play_time_based_greeting()
+            except Exception as e:
+                logger.warning(f"First person greeting audio not available: {e}")
+        elif self.hardware_manager:
+            try:
+                if greeting_type == "morning":
+                    self.hardware_manager.greet_person(f"Good morning, {person_name}")
+                elif greeting_type == "evening":
+                    self.hardware_manager.greet_person(f"Good evening, {person_name}")
+                else:
+                    self.hardware_manager.greet_person(person_name)
+            except Exception as e:
+                logger.warning(f"Hardware first person greeting not available: {e}")
+        else:
+            # Fallback to text output
+            if greeting_type == "morning":
+                print(f"Good morning, {person_name}! (First person today)")
+            elif greeting_type == "evening":
+                print(f"Good evening, {person_name}! (First person today)")
+            else:
+                print(f"Hello, {person_name}! (First person today)")
+    
     def _needs_reverification(self, track: PersonTrack, current_time: float) -> bool:
         """Check if trusted person needs re-verification"""
         if not track.is_trusted:
@@ -2007,12 +2092,12 @@ class AdvancedPersonTracker:
             logger.info(f"👥 Guest mode activated for {track.identity} - 15 minutes of guest access")
             print(f"👥 Guest mode activated for {track.identity} - 15 minutes of guest access")
             
-            # Announce guest mode activation
+            # Play welcome message instead of "guest mode activated"
             if self.sound_player and time.time() >= getattr(self, 'silence_until', 0.0):
                 try:
-                    self.sound_player.play_guest_mode_activated(track.identity)
+                    self.sound_player.play_guest_welcome()
                 except Exception as e:
-                    logger.warning(f"Guest mode sound not available: {e}")
+                    logger.warning(f"Guest welcome sound not available: {e}")
             
             if self.hardware_manager:
                 try:
@@ -2039,6 +2124,17 @@ class AdvancedPersonTracker:
         for name in expired_entries:
             del self.global_trusted_memory[name]
             logger.info(f"🧹 Cleared trusted memory for {name} (expired)")
+    
+    def _reset_daily_greeting_tracking(self, current_time: float):
+        """Reset first person greeting tracking for new day"""
+        current_time_dt = datetime.now()
+        today_start = datetime(current_time_dt.year, current_time_dt.month, current_time_dt.day).timestamp()
+        
+        # Reset if it's a new day
+        if current_time >= today_start and self.first_person_greeting_time < today_start:
+            self.first_person_greeting_today = False
+            self.first_person_greeting_time = 0.0
+            logger.info("🌅 New day detected - first person greeting tracking reset")
     
     def _handle_unknown_person(self, frame: np.ndarray, track: PersonTrack, face_roi: np.ndarray, current_time: float):
         """Handle detection of unknown person"""

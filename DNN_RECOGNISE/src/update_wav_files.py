@@ -87,7 +87,10 @@ class WAVFileUpdater:
                 },
                 'welcome_back': "પાછા આવ્યા માટે આભાર {name}!",
                 'guest_mode_activated': "મહેમાન મોડ સક્રિય થયો છે. {host_name} સાથે મહેમાન આવ્યા છે.",
-                'guest_mode_expired': "મહેમાન મોડ સમાપ્ત થયો છે. સામાન્ય સુરક્ષા પ્રોટોકોલ પર પાછા ફરી રહ્યા છીએ."
+                'guest_mode_expired': "મહેમાન મોડ સમાપ્ત થયો છે. સામાન્ય સુરક્ષા પ્રોટોકોલ પર પાછા ફરી રહ્યા છીએ.",
+                'first_person_morning_greeting': "સુપ્રભાત! આજે પહેલી વ્યક્તિ તમે છો.",
+                'first_person_evening_greeting': "શુભ સાંજ! આજે પહેલી વ્યક્તિ તમે છો.",
+                'guest_welcome': "સ્વાગત છે! મહેમાન તરીકે આપનું સ્વાગત છે."
             }
         else:  # English
             return {
@@ -110,7 +113,10 @@ class WAVFileUpdater:
                 },
                 'welcome_back': "Welcome back!",
                 'guest_mode_activated': "Hello, Welcome, Guest mode activated.",
-                'guest_mode_expired': "Guest mode expired."
+                'guest_mode_expired': "Guest mode expired.",
+                'first_person_morning_greeting': "Hello, Good morning!",
+                'first_person_evening_greeting': "Hello, Good evening!",
+                'guest_welcome': "Welcome!"
             }
     
     def generate_wav_file(self, text: str, filepath: str) -> bool:
